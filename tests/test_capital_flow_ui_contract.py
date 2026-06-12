@@ -171,6 +171,7 @@ class CapitalFlowUiContractTests(unittest.TestCase):
         self.assertIn("function bindChartTooltips", script)
         self.assertIn("function nearestTooltipIndex", script)
         self.assertIn("data-chart-tooltips", script)
+        self.assertIn('preserveAspectRatio="none"', script)
         self.assertIn("pointermove", script)
         self.assertIn("item.label", script)
         self.assertIn("item.x", script)

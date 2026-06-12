@@ -299,7 +299,7 @@ function renderDailyFlowBars(points, label) {
     <div class="flow-chart">
       <div class="chart-title">${label}</div>
       <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
-        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(label)}">
+        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
           <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
           ${bars}
         </svg>
@@ -341,7 +341,7 @@ function renderRollingFlowLine(points, label) {
     <div class="flow-chart">
       <div class="chart-title">${label}</div>
       <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
-        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(label)}">
+        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
           <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
           <path d="${path}" class="flow-line"></path>
           ${dots}
