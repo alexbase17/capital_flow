@@ -1,0 +1,192 @@
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from src.app import app
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+
+
+class CapitalFlowUiContractTests(unittest.TestCase):
+    def setUp(self):
+        self.client = app.test_client()
+
+    def get_text(self, path: str) -> tuple[int, str]:
+        response = self.client.get(path)
+        try:
+            return response.status_code, response.get_data(as_text=True)
+        finally:
+            response.close()
+
+    def static_text(self, filename: str) -> str:
+        return (ROOT_DIR / "src" / "static" / filename).read_text(encoding="utf-8")
+
+    def test_capital_flow_page_is_standalone_homepage(self):
+        status, html = self.get_text("/")
+
+        self.assertEqual(status, 200)
+        self.assertIn("<h1>资金流向</h1>", html)
+        self.assertIn('<a href="/" class="active">资金流向</a>', html)
+        self.assertRegex(html, r'/static/capital_flow\.css\?v=\d{8}-\d+')
+        self.assertRegex(html, r'/static/capital_flow\.js\?v=\d{8}-\d+')
+        self.assertNotIn("<style>", html)
+        self.assertNotIn("onclick=", html)
+        self.assertIn("ETF净申购金额", html)
+        self.assertIn("宽基被动ETF", html)
+        self.assertIn("A股行业", html)
+        self.assertIn("港股行业", html)
+        self.assertIn("策略因子", html)
+        self.assertNotIn('aria-label="资金流向时间窗口"', html)
+        self.assertNotIn('id="windowButtons"', html)
+        self.assertNotIn('id="flowDateRange"', html)
+        self.assertNotIn("资金流向总览", html)
+        self.assertIn('aria-label="资金流向分组导航"', html)
+        self.assertIn('href="#capital-section-total" class="active" data-section-link="total">总览</a>', html)
+        self.assertIn('href="#capital-section-broad" data-section-link="broad">宽基</a>', html)
+        self.assertIn('href="#capital-section-strategy" data-section-link="strategy">策略因子</a>', html)
+        self.assertIn('href="#capital-section-a-industry" data-section-link="a_industry">A股行业</a>', html)
+        self.assertIn('href="#capital-section-hk-industry" data-section-link="hk_industry">港股行业</a>', html)
+        self.assertIn('id="capital-section-total" data-section="total"', html)
+        self.assertIn('id="capital-section-broad" data-section="broad"', html)
+        self.assertIn('id="capital-section-strategy" data-section="strategy"', html)
+        self.assertIn('id="capital-section-a-industry" data-section="a_industry"', html)
+        self.assertIn('id="capital-section-hk-industry" data-section="hk_industry"', html)
+        self.assertNotIn("权益 ETF 分类覆盖率", html)
+        self.assertNotIn("北上/南下资金流向", html)
+        self.assertIn("优先按基金跟踪基准归类", html)
+        self.assertIn("优先于名称中的行业词", html)
+        self.assertIn("仅展示同一主题 ETF 最新规模合计超过 20 亿元", html)
+        self.assertIn("20 亿元的行业/主题", html)
+        self.assertIn("指数增强属于主动增强，不纳入本表", html)
+        self.assertNotIn('id="refreshFlowBtn"', html)
+
+    def test_capital_flow_api_returns_service_payload(self):
+        payload = {
+            "north_south": {"latest_date": "2026-06-11", "previous_date": "2026-06-10", "rows": []},
+            "etf": {"latest_date": "2026-06-11", "previous_date": "2026-06-10", "sections": {}},
+            "threshold_yi": 20,
+            "notes": [],
+        }
+        with patch("src.capital_flow.routes.capital_flow_payload", return_value=payload) as service:
+            response = self.client.get("/api/capital-flow")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), payload)
+        service.assert_called_once_with(force_refresh=False, window_key=None)
+
+    def test_capital_flow_static_scripts_render_expected_sections(self):
+        script = self.static_text("capital_flow.js")
+        css = self.static_text("capital_flow.css")
+
+        self.assertIn('"/api/capital-flow"', script)
+        self.assertNotIn("refresh=1", script)
+        self.assertIn("function renderTotalFlow", script)
+        self.assertNotIn("function renderWindowButtons", script)
+        self.assertNotIn("function activeWindowData", script)
+        self.assertNotIn("function renderFlowDateRange", script)
+        self.assertIn("function renderCapitalFlow", script)
+        self.assertIn("function setupSectionNav", script)
+        self.assertIn("function sortableHeader", script)
+        self.assertIn("function sortedRows", script)
+        self.assertIn("function bindTableSort", script)
+        self.assertIn('const defaultTableSort = { key: "flow_1d", order: "desc" };', script)
+        self.assertIn("function pxVar", script)
+        self.assertIn("function activeSectionFromScroll", script)
+        self.assertIn('pxVar("--capital-section-nav-height", 62)', script)
+        self.assertIn("requestAnimationFrame", script)
+        self.assertIn("[data-section-link]", script)
+        self.assertIn("ETF净申购金额", script)
+        self.assertIn("北上资金", script)
+        self.assertIn("南下资金", script)
+        self.assertIn("宽基被动ETF", script)
+        self.assertIn("策略因子(>=20亿)", script)
+        self.assertIn("A股行业(>=20亿)", script)
+        self.assertIn("港股行业(>=20亿)", script)
+        self.assertIn('const windowKeys = ["1d", "3d", "7d", "30d"];', script)
+        self.assertIn("function windowPayload", script)
+        self.assertIn("function mergeRowsForSection", script)
+        self.assertIn("function renderFlowChart", script)
+        self.assertIn("function toggleRow", script)
+        self.assertIn("function formatIndexName", script)
+        self.assertIn("row.display_name || row.index_name", script)
+        self.assertIn("row.index_code", script)
+        self.assertNotIn("currentWindowKey", script)
+        self.assertNotIn("data-window-key", script)
+        self.assertNotIn("全量宽基ETF", script)
+        self.assertNotIn("权益ETF分类覆盖率", script)
+        self.assertNotIn("target_coverage_pct", script)
+        self.assertNotIn('"总计"', script)
+        self.assertNotIn("renderNorthSouth", script)
+        self.assertNotIn("total_net_flow_yi", script)
+        self.assertNotIn('"hsgt"', script.split("const sectionIds", 1)[1].split("];", 1)[0])
+        self.assertNotIn("优先净值，缺失估算", script)
+        self.assertIn('renderTable("broadTable"', script)
+        self.assertIn('renderTable("aIndustryTable"', script)
+        self.assertIn('renderTable("hkIndustryTable"', script)
+        self.assertIn('renderTable("strategyTable"', script)
+        self.assertIn('sortableHeader(tableId, "change_pct", "当日涨跌幅"', script)
+        self.assertIn("flow_1d", script)
+        self.assertIn("flow_3d", script)
+        self.assertIn("flow_7d", script)
+        self.assertIn("flow_30d", script)
+        self.assertIn("ratio_1d", script)
+        self.assertIn("ratio_3d", script)
+        self.assertIn("ratio_7d", script)
+        self.assertIn("ratio_30d", script)
+        self.assertIn("${windowLabels[key]}净申购金额", script)
+        self.assertIn("${windowLabels[key]}净申购金额占比", script)
+        self.assertIn("当日ETF规模", script)
+        self.assertIn("data-sort-key", script)
+        self.assertIn("data-next-order", script)
+        self.assertNotIn("sort-arrow", script)
+        self.assertIn("规模加权涨跌幅", script)
+        self.assertNotIn("<th>口径</th>", script)
+        self.assertNotIn("<th>主要ETF</th>", script)
+        self.assertNotIn("renderEtfList", script)
+        self.assertNotIn("price_source_label", script)
+        self.assertIn("同日单位净值", script)
+        self.assertIn("份额日期相邻差", script)
+        self.assertIn("正数表示净申购，负数表示净赎回", script)
+        self.assertNotIn("规模过滤阈值", script)
+        self.assertNotIn("renderNotes", script)
+        self.assertIn(".positive", css)
+        self.assertIn(".negative", css)
+        self.assertIn(".positive { color: #047857; }", css)
+        self.assertIn(".negative { color: #b91c1c; }", css)
+        self.assertIn("th.num-head { text-align: right;", css)
+        self.assertIn(".sort-button", css)
+        self.assertNotIn(".section-window-toolbar", css)
+        self.assertIn(".section-links", css)
+        self.assertNotIn(".window-button.active", css)
+        self.assertIn(".flow-matrix", css)
+        self.assertIn(".data-row", css)
+        self.assertIn(".detail-row", css)
+        self.assertIn(".flow-chart", css)
+        self.assertIn(".flow-line", css)
+        self.assertIn(".sort-button::before", css)
+        self.assertIn('.sort-button[data-sort-order="asc"]::before', css)
+        self.assertIn('.sort-button[data-sort-order="desc"]::before', css)
+        self.assertNotIn(".sort-button:hover::before", css)
+        self.assertNotIn(".sort-button:hover, .sort-button.active", css)
+        self.assertNotIn(".sort-arrow", css)
+        self.assertIn(".section-nav", css)
+        self.assertIn("--capital-header-height", css)
+        self.assertIn("--capital-section-nav-height", css)
+        self.assertIn("--capital-section-gap", css)
+        self.assertIn("--capital-section-nav-height: 62px", css)
+        self.assertIn("padding: calc(10px + var(--capital-section-gap)) 0 14px", css)
+        self.assertIn(".summary-panel .panel-header { border-bottom: 0;", css)
+        self.assertIn("padding-top: calc(var(--capital-header-height) + var(--capital-section-nav-height))", css)
+        self.assertIn(".header { position: fixed;", css)
+        self.assertIn(".section-nav { position: fixed;", css)
+        self.assertIn("top: var(--capital-header-height)", css)
+        self.assertIn(".help-tip", css)
+        self.assertIn("overflow: visible", css)
+        self.assertIn("vertical-align: middle", css)
+        self.assertNotIn(".source-cell", css)
+        self.assertIn("table-layout: fixed", css)
+
+
+if __name__ == "__main__":
+    unittest.main()
