@@ -63,7 +63,10 @@ th:nth-child(n+2), td:nth-child(n+2) { width: 116px; }
 .chart-hover-layer { position: absolute; inset: 0; cursor: default; }
 .chart-tooltip { position: absolute; z-index: 3; top: 8px; transform: translateX(-50%); max-width: 280px; padding: 6px 8px; border-radius: 6px; background: #111827; color: #ffffff; font-size: 12px; font-weight: 500; line-height: 1.35; white-space: nowrap; box-shadow: 0 8px 18px rgba(15, 23, 42, .18); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .06s linear; }
 .chart-tooltip.visible { opacity: 1; visibility: visible; }
-.chart-range { display: flex; justify-content: space-between; color: #667386; font-size: 12px; margin-top: 4px; }
+.chart-range { position: relative; height: 18px; color: #667386; font-size: 12px; margin-top: 4px; }
+.chart-tick { position: absolute; top: 0; transform: translateX(-50%); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chart-tick.first { transform: translateX(0); }
+.chart-tick.last { transform: translateX(-100%); }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .positive { color: #047857; }
 .negative { color: #b91c1c; }

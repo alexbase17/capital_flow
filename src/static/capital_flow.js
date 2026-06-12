@@ -226,6 +226,50 @@ function tooltipPayload(value) {
   return escapeHtml(value);
 }
 
+function shortDateLabel(value) {
+  const parts = String(value || "").split("-");
+  if (parts.length >= 3) return `${parts[1]}-${parts[2]}`;
+  return String(value || "");
+}
+
+function chartTickIndexes(count, maxTicks = 5) {
+  if (count <= 0) return [];
+  if (count <= maxTicks) return Array.from({ length: count }, (_, index) => index);
+  const indexes = new Set();
+  const tickCount = Math.min(maxTicks, count);
+  for (let tick = 0; tick < tickCount; tick += 1) {
+    indexes.add(Math.round((tick * (count - 1)) / (tickCount - 1)));
+  }
+  return Array.from(indexes).sort((a, b) => a - b);
+}
+
+function renderChartRangeTicks(items) {
+  if (!items.length) return "";
+  const ticks = chartTickIndexes(items.length).map(index => {
+    const item = items[index];
+    const x = Math.min(1, Math.max(0, Number(item.x || 0)));
+    const edgeClass = x <= 0.02 ? " first" : x >= 0.98 ? " last" : "";
+    return `<span class="chart-tick${edgeClass}" style="left: ${(x * 100).toFixed(2)}%">${escapeHtml(shortDateLabel(item.date))}</span>`;
+  }).join("");
+  return `<div class="chart-range">${ticks}</div>`;
+}
+
+function nearestTooltipIndex(ratio, items) {
+  if (items.length <= 1) return 0;
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+  items.forEach((item, index) => {
+    const fallbackX = items.length === 1 ? 0 : index / (items.length - 1);
+    const x = Number.isFinite(Number(item.x)) ? Number(item.x) : fallbackX;
+    const distance = Math.abs(x - ratio);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
 function renderDailyFlowBars(points, label) {
   const width = 1040;
   const height = 180;
@@ -246,7 +290,11 @@ function renderDailyFlowBars(points, label) {
       <rect class="${className}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${h.toFixed(1)}"></rect>
     `;
   }).join("");
-  const tooltipValues = points.map(point => `${point.date} · 净申购金额 ${fmtYi(point.value)}`);
+  const tooltipValues = points.map((point, index) => ({
+    x: (index + 0.5) / Math.max(points.length, 1),
+    date: point.date,
+    label: `${point.date} · 净申购金额 ${fmtYi(point.value)}`
+  }));
   return `
     <div class="flow-chart">
       <div class="chart-title">${label}</div>
@@ -258,10 +306,7 @@ function renderDailyFlowBars(points, label) {
         <div class="chart-hover-layer" aria-hidden="true"></div>
         <div class="chart-tooltip" aria-hidden="true"></div>
       </div>
-      <div class="chart-range">
-        <span>${points[0]?.date || ""}</span>
-        <span>${points[points.length - 1]?.date || ""}</span>
-      </div>
+      ${renderChartRangeTicks(tooltipValues)}
     </div>
   `;
 }
@@ -287,7 +332,11 @@ function renderRollingFlowLine(points, label) {
       <circle class="rolling-point ${flowClass(point.value)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.6"></circle>
     `;
   }).join("");
-  const tooltipValues = rollingPoints.map(point => `${point.start_date} 至 ${point.end_date} · 净申购金额 ${fmtYi(point.value)}`);
+  const tooltipValues = rollingPoints.map((point, index) => ({
+    x: rollingPoints.length === 1 ? 0 : index / (rollingPoints.length - 1),
+    date: point.end_date,
+    label: `${point.start_date} 至 ${point.end_date} · 净申购金额 ${fmtYi(point.value)}`
+  }));
   return `
     <div class="flow-chart">
       <div class="chart-title">${label}</div>
@@ -300,10 +349,7 @@ function renderRollingFlowLine(points, label) {
         <div class="chart-hover-layer" aria-hidden="true"></div>
         <div class="chart-tooltip" aria-hidden="true"></div>
       </div>
-      <div class="chart-range">
-        <span>${rollingPoints[0]?.start_date || ""}</span>
-        <span>${rollingPoints[rollingPoints.length - 1]?.end_date || ""}</span>
-      </div>
+      ${renderChartRangeTicks(tooltipValues)}
     </div>
   `;
 }
@@ -319,27 +365,24 @@ function renderFlowChart(row) {
   `;
 }
 
-function chartTooltipIndex(ratio, count) {
-  if (count <= 1) return 0;
-  return Math.min(count - 1, Math.max(0, Math.floor(ratio * count)));
-}
-
 function bindChartTooltips(scope) {
   scope.querySelectorAll("[data-chart-tooltips]").forEach(plot => {
     const tooltip = plot.querySelector(".chart-tooltip");
-    let values = [];
+    let items = [];
     try {
-      values = JSON.parse(plot.dataset.chartTooltips || "[]");
+      items = JSON.parse(plot.dataset.chartTooltips || "[]");
     } catch {
-      values = [];
+      items = [];
     }
-    if (!tooltip || !values.length) return;
+    if (!tooltip || !items.length) return;
     plot.addEventListener("pointermove", event => {
       const rect = plot.getBoundingClientRect();
       const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-      const index = chartTooltipIndex(ratio, values.length);
-      tooltip.textContent = values[index] || "";
-      tooltip.style.left = `${ratio * 100}%`;
+      const index = nearestTooltipIndex(ratio, items);
+      const item = items[index] || {};
+      const x = Math.min(0.98, Math.max(0.02, Number(item.x ?? ratio)));
+      tooltip.textContent = item.label || "";
+      tooltip.style.left = `${x * 100}%`;
       tooltip.classList.add("visible");
     });
     plot.addEventListener("pointerleave", () => {
