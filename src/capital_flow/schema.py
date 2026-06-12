@@ -6,6 +6,7 @@ from typing import Any
 
 
 REQUIRED_TOP_LEVEL_KEYS = {
+    "data_status",
     "north_south",
     "etf",
     "windows",
@@ -20,6 +21,7 @@ REQUIRED_ETF_KEYS = {
     "latest_date",
     "previous_date",
     "nav_date",
+    "data_status",
     "coverage",
     "quality",
     "sections",
@@ -33,6 +35,7 @@ REQUIRED_ROW_KEYS = {
     "net_flow_yi",
     "net_flow_ratio",
     "scale_yi",
+    "start_scale_yi",
     "etf_count",
     "nav_count",
     "close_estimate_count",
@@ -50,6 +53,7 @@ def validate_capital_flow_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if missing:
         raise ValueError(f"capital-flow payload missing keys: {sorted(missing)}")
     _expect_dict(payload["north_south"], "north_south")
+    _expect_dict(payload["data_status"], "data_status")
     etf = _expect_dict(payload["etf"], "etf")
     etf_missing = REQUIRED_ETF_KEYS - etf.keys()
     if etf_missing:
@@ -62,12 +66,14 @@ def validate_capital_flow_payload(payload: dict[str, Any]) -> dict[str, Any]:
         _validate_section(section_name, _expect_dict(section, f"etf.sections.{section_name}"))
     _expect_dict(etf["coverage"], "etf.coverage")
     _expect_dict(etf["quality"], "etf.quality")
+    _expect_dict(etf["data_status"], "etf.data_status")
     _expect_dict(payload["windows"], "windows")
     window_payloads = _expect_dict(payload["window_payloads"], "window_payloads")
     for window_key, window_payload in window_payloads.items():
         window_dict = _expect_dict(window_payload, f"window_payloads.{window_key}")
         _expect_dict(window_dict.get("north_south"), f"window_payloads.{window_key}.north_south")
         window_etf = _expect_dict(window_dict.get("etf"), f"window_payloads.{window_key}.etf")
+        _expect_dict(window_etf.get("data_status"), f"window_payloads.{window_key}.etf.data_status")
         window_sections = _expect_dict(window_etf.get("sections"), f"window_payloads.{window_key}.etf.sections")
         section_missing = EXPECTED_SECTIONS - window_sections.keys()
         if section_missing:

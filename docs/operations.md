@@ -111,6 +111,14 @@ launchctl bootout gui/$(id -u) /Users/nova/Library/LaunchAgents/com.capital-flow
 launchctl bootstrap gui/$(id -u) /Users/nova/Library/LaunchAgents/com.capital-flow.web.plist
 ```
 
+仅需要重启当前运行实例时：
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.capital-flow.web
+```
+
+修改 `src/templates/` 或 `src/static/` 后，后台服务需要重启或 kickstart。Flask 生产模式下可能继续使用旧模板缓存；如果只更新了 CSS/JS 而模板仍旧，页面会出现旧 DOM 与新样式混用的问题。
+
 ## 访问验证
 
 页面：
@@ -163,6 +171,28 @@ tail -100 logs/web.log
 tail -100 logs/web.err.log
 ```
 
+## 数据缓存
+
+TuShare 原始响应缓存目录：
+
+```text
+data/tushare_cache/
+```
+
+用途：
+
+- 避免服务重启或 API payload 缓存过期后重复拉取完整 60 个交易日窗口。
+- 日常使用时主要补新增交易日数据，历史日期直接复用本地缓存。
+- 近期交易日缓存 30 分钟，历史交易日长期复用。
+
+排障时绕过文件缓存：
+
+```bash
+CAPITAL_FLOW_DISABLE_FILE_CACHE=1 scripts/start_web.sh
+```
+
+如果怀疑本地缓存损坏，可以删除 `data/tushare_cache/` 后重启服务；首次请求会重新拉取完整窗口，耗时会明显变长。
+
 ## 常见问题
 
 ### 本机能访问，局域网不能访问
@@ -209,6 +239,30 @@ curl --noproxy '*' -sS http://127.0.0.1:5083/api/capital-flow
 ### 修改分类后和机构数据仍有差异
 
 这是预期风险之一。机构可能使用 Wind 自有 ETF 池、公告日/确认日、场内/场外分层或人工维护分类。本项目当前以 TuShare ETF 数据和跟踪指数规则为准，目标是方向参考和可解释，不保证逐项贴合某一家机构。
+
+分类改动后先运行后台审计：
+
+```bash
+.venv/bin/python scripts/audit_etf_taxonomy.py
+```
+
+涉及 A 股行业/主题边界时，再运行成分暴露审计：
+
+```bash
+.venv/bin/python scripts/audit_etf_taxonomy.py --with-sw-exposure --exposure-limit 30
+```
+
+重点看：
+
+- `by_source.benchmark_exact` 是否提升，表示更多 ETF 使用明确指数映射。
+- `by_source.benchmark_pattern` 是否下降，表示关键词兜底减少。
+- `by_taxonomy_type` 和 `by_parent_bucket` 是否符合预期，用于观察行业、主题、策略和后台大类结构。
+- `unclassified_samples` 是否主要是增强、ESG、区域、国企改革、非主流宽基等暂不进入前台聚合的品种。
+- `sw2021_exposure.exposures` 中 `top_industry_weight` 是否足够集中；主题指数如果前三大行业分散，应保留主题分类，不硬并入单一传统行业。
+- `sw2021_exposure.missing_index_code_samples` 会按当前 ETF 规模优先展示，先补 `scale_yi` 大、`etf_count` 多且能唯一确认的指数代码。
+- `sw2021_exposure.label_consistency.flagged_samples` 是否提示同一前台标签下的跟踪指数暴露差异过大；这类结果先人工复核，不自动拆分前台标签。
+- `sw2021_exposure.missing_index_code_count` 和 `no_weight_count` 是否异常升高；升高时先查指数代码解析或 TuShare 权重数据，不直接改前台标签。
+- 精确映射应优先维护在 `src/capital_flow/taxonomy_data.json`；不要为了追求覆盖率，把无法确认的主题仅凭基金简称并入行业表。
 
 ## 提交流程
 

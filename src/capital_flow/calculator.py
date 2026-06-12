@@ -30,6 +30,7 @@ class EtfFlowGroup:
     index_code: str = ""
     net_flow_yi: float = 0.0
     scale_yi: float = 0.0
+    start_scale_yi: float = 0.0
     change_weight_yi: float = 0.0
     change_weighted_sum: float = 0.0
     etf_count: int = 0
@@ -71,6 +72,7 @@ def etf_flows_for_window(
     daily_prices: dict[str, dict[str, float]],
     daily_navs: dict[str, dict[str, float]],
     daily_shares: dict[str, dict[str, float]],
+    data_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if len(dates) < window_days + 1:
         raise TushareUnavailable(f"fund_daily: expected at least {window_days + 1} recent ETF trading dates")
@@ -80,6 +82,8 @@ def etf_flows_for_window(
     latest_prices = daily_prices[latest_date]
     previous_prices = daily_prices[previous_date]
     latest_shares = daily_shares[latest_date]
+    start_prices = daily_prices[previous_date]
+    start_shares = daily_shares[previous_date]
     groups: dict[tuple[str, str], EtfFlowGroup] = {}
     total_etf_count = 0
     priced_etf_count = 0
@@ -95,6 +99,8 @@ def etf_flows_for_window(
         close = latest_prices.get(code)
         previous_close = previous_prices.get(code)
         latest_share = latest_shares.get(code)
+        start_price = start_prices.get(code)
+        start_share = start_shares.get(code)
         if close is None or latest_share is None or close <= 0:
             skipped_flow_count += 1
             continue
@@ -117,6 +123,7 @@ def etf_flows_for_window(
             classified_target_etf_count += 1
         section, index_name = classified
         scale_yi = latest_share * close / 10000
+        start_scale_yi = start_share * start_price / 10000 if start_share is not None and start_price is not None and start_price > 0 else 0.0
         change_pct = change_pct_from_close(close, previous_close)
         key = (section, index_name)
         group = groups.setdefault(
@@ -124,6 +131,7 @@ def etf_flows_for_window(
             EtfFlowGroup(section=section, index_name=index_name, index_code=index_code_for_group(section, index_name)),
         )
         group.scale_yi += scale_yi
+        group.start_scale_yi += start_scale_yi
         if change_pct is not None:
             group.change_weight_yi += scale_yi
             group.change_weighted_sum += change_pct * scale_yi
@@ -173,6 +181,7 @@ def etf_flows_for_window(
                 "code": code,
                 "name": name,
                 "scale_yi": round(scale_yi, 2),
+                "start_scale_yi": round(start_scale_yi, 2) if start_scale_yi else None,
                 "net_flow_yi": round(etf_net_flow_yi, 2),
                 "change_pct": round(change_pct, 2) if change_pct is not None else None,
                 "flow_price": round(last_flow_price, 4),
@@ -191,12 +200,23 @@ def etf_flows_for_window(
         "broad": section_payload(groups, "broad", "宽基被动ETF净申购金额", min_scale_yi=None),
         "a_industry": section_payload(groups, "a_industry", "A股行业净申购金额", min_scale_yi=MIN_INDEX_SCALE_YI),
         "hk_industry": section_payload(groups, "hk_industry", "港股行业净申购金额", min_scale_yi=MIN_INDEX_SCALE_YI),
-        "strategy": section_payload(groups, "strategy", "策略/因子ETF净申购金额", min_scale_yi=MIN_INDEX_SCALE_YI),
+        "strategy": section_payload(groups, "strategy", "策略因子ETF净申购金额", min_scale_yi=MIN_INDEX_SCALE_YI),
     }
     return {
         "latest_date": fmt_date(latest_date),
         "previous_date": fmt_date(previous_date),
         "nav_date": fmt_date(latest_date) if daily_navs.get(latest_date) else None,
+        "data_status": data_status
+        or {
+            "status": "ready",
+            "as_of_date": fmt_date(latest_date),
+            "requested_latest_date": fmt_date(latest_date),
+            "price_date": fmt_date(latest_date),
+            "share_date": fmt_date(latest_date),
+            "nav_date": fmt_date(latest_date) if daily_navs.get(latest_date) else None,
+            "is_aligned": True,
+            "fallback_reason": None,
+        },
         "total_net_flow_yi": round(sum(group.net_flow_yi for group in groups.values()), 2),
         "coverage": {
             "total_etf_count": total_etf_count,
@@ -261,8 +281,9 @@ def group_payload(group: EtfFlowGroup) -> dict[str, Any]:
         if group.change_weight_yi > 0
         else None,
         "net_flow_yi": round(group.net_flow_yi, 2),
-        "net_flow_ratio": round(group.net_flow_yi / group.scale_yi * 100, 2) if group.scale_yi else None,
+        "net_flow_ratio": round(group.net_flow_yi / group.start_scale_yi * 100, 2) if group.start_scale_yi else None,
         "scale_yi": round(group.scale_yi, 2),
+        "start_scale_yi": round(group.start_scale_yi, 2),
         "etf_count": group.etf_count,
         "nav_count": group.nav_count,
         "close_estimate_count": group.close_estimate_count,

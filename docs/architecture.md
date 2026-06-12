@@ -30,8 +30,8 @@
 
 `/api/capital-flow` 支持参数：
 
-- `window=1d|3d|7d|30d`：选择页面主窗口；返回体仍包含全部窗口的总览数据。
-- `refresh=1`：跳过进程内短缓存，强制重新拉取数据。
+- `window=1d|3d|5d|20d|60d`：选择页面主窗口；返回体仍包含全部窗口的总览数据。
+- `refresh=1`：跳过进程内 payload 缓存并重新编排结果；仍会复用 TuShare 文件缓存。
 
 ## 后端模块
 
@@ -45,7 +45,10 @@
 | `src/capital_flow/service.py` | 缓存、窗口选择、TuShare 拉取编排、payload 校验 |
 | `src/capital_flow/fetcher.py` | 按接口封装 TuShare 数据读取 |
 | `src/capital_flow/calculator.py` | 北上/南下资金、ETF 净申购、规模、涨跌幅计算 |
-| `src/capital_flow/taxonomy.py` | 宽基、策略因子、A 股行业、港股行业分类规则 |
+| `src/capital_flow/taxonomy_data.json` | ETF 精确指数分类主数据，记录 market、asset_class、taxonomy_type、parent_bucket 等后台字段 |
+| `src/capital_flow/taxonomy.py` | ETF 分类归一化、优先级、主数据读取和关键词兜底 |
+| `src/capital_flow/taxonomy_audit.py` | ETF 分类覆盖率、分类来源、置信度和未分类样本审计 |
+| `src/capital_flow/taxonomy_exposure.py` | ETF 跟踪指数成分股行业暴露审计，当前用于 A 股申万 2021 一级行业校验 |
 | `src/capital_flow/schema.py` | API 返回结构校验，防止前后端契约漂移 |
 
 ## 前端模块
@@ -56,16 +59,28 @@
 | `src/static/capital_flow.js` | API 请求、总览矩阵、表格渲染、排序、展开曲线 |
 | `src/static/capital_flow.css` | 页面布局、表格、颜色和响应式样式 |
 
-前端不直接保存用户配置，也不写入后端数据。刷新页面或调用 API 会重新读取后端缓存或 TuShare 数据。
+前端不直接保存用户配置，也不写入后端数据。刷新页面或调用 API 会读取后端进程内缓存、本地 TuShare 原始数据缓存或 TuShare 远端数据。
 
 ## 缓存
 
-`src/capital_flow/service.py` 中 `ETF_CACHE_SECONDS = 30 * 60`。
+本项目有两层缓存：
 
-- 缓存按窗口 key 保存。
+1. API payload 进程内缓存：`src/capital_flow/service.py` 中 `ETF_CACHE_SECONDS = 30 * 60`。
+2. TuShare 原始响应文件缓存：`src/capital_flow/fetcher.py` 写入 `data/tushare_cache/`。
+
+API payload 缓存：
+
+- 按窗口 key 保存。
 - 默认 API 请求会使用缓存。
-- `refresh=1` 会强制刷新。
-- 缓存只在当前 Python 进程内存在，服务重启后清空。
+- `refresh=1` 会强制刷新 payload。
+- 只在当前 Python 进程内存在，服务重启后清空。
+
+TuShare 文件缓存：
+
+- 按接口和日期保存 `fund_daily`、`fund_share`、`fund_nav` 等原始查询结果。
+- 近期交易日和最近日期列表缓存 30 分钟。
+- 较早交易日数据长期复用，减少 60 个交易日窗口重复拉取。
+- 设置 `CAPITAL_FLOW_DISABLE_FILE_CACHE=1` 可临时绕过文件缓存做排障。
 
 ## API 返回结构
 
@@ -73,12 +88,27 @@
 
 - `north_south`：当前窗口北上/南下资金。
 - `etf`：当前窗口 ETF 数据，包括 `sections`、`coverage`、`quality`。
-- `window_payloads`：`1d / 3d / 7d / 30d` 全部窗口数据，用于总览矩阵。
+- `data_status`：当前窗口数据状态，包含 ETF 价格/份额日期对齐信息和北上/南下最新日期。
+- `window_payloads`：`1d / 3d / 5d / 20d / 60d` 全部窗口数据，用于总览矩阵。
 - `windows`：窗口配置。
 - `default_window`：默认窗口，当前为 `1d`。
 - `selected_window` / `selected_window_label`：当前窗口。
 - `threshold_yi`：行业和策略因子的规模展示阈值，当前为 `20`。
 - `notes`：页面口径提示。
+
+ETF 数据状态字段：
+
+- `status`：`ready` 或 `fallback`。
+- `as_of_date`：ETF 结论使用的数据日。
+- `requested_latest_date`：候选 ETF 交易日中的最新日期。
+- `latest_price_date` / `latest_share_date`：TuShare 当前可取到的最新价格日和份额日。
+- `price_date` / `share_date`：本次计算实际使用的对齐日期。
+- `nav_date`：同日单位净值可用日期，缺失时按同日收盘价估算。
+- `is_aligned`：ETF 价格日和份额日是否对齐；当前服务只输出对齐后的 ETF 结论。
+- `required_etf_count`：本次严格完整性检查覆盖的目标权益 ETF 数量。
+- `missing_price_count` / `missing_share_count`：最新候选交易日中缺少价格或份额的目标权益 ETF 数量。
+
+页面状态行显示在分区 tab 下方、总览模块上方，用于说明当前全页 ETF 结论的数据日。该行不放入总览卡片，避免用户误以为只约束总览表格。
 
 `etf.sections` 下的 section：
 
@@ -91,7 +121,7 @@
 
 | 测试文件 | 覆盖内容 |
 |---|---|
-| `tests/test_capital_flow_service.py` | TuShare 数据样本、计算口径、分类规则、payload 结构 |
+| `tests/test_capital_flow_service.py` | TuShare 数据样本、计算口径、分类规则、分类审计、payload 结构 |
 | `tests/test_capital_flow_ui_contract.py` | 前端脚本关键契约、字段名、默认排序 |
 
 统一验证入口：
@@ -104,5 +134,6 @@ scripts/verify_all.sh
 
 - 修改计算口径时，先加或改 `tests/test_capital_flow_service.py`。
 - 修改 API 字段时，必须同步 `schema.py` 和前端渲染逻辑。
-- 修改分类规则时，优先在 `taxonomy.py` 增加明确的跟踪指数映射；不要仅凭基金简称做高风险主观归类。
+- 修改分类规则时，优先在 `taxonomy_data.json` 增加明确的跟踪指数映射；不要仅凭基金简称做高风险主观归类。修改后运行 `scripts/audit_etf_taxonomy.py`，确认精确映射、关键词兜底和未分类样本变化符合预期。
+- 修改 A 股行业/主题边界时，先运行 `scripts/audit_etf_taxonomy.py --with-sw-exposure` 做申万 2021 成分暴露复核；只有暴露结果稳定、指数代码唯一且样本合理时，才更新前台分类主数据。
 - 修改页面布局时，至少运行 `node --check src/static/capital_flow.js` 和完整 `scripts/verify_all.sh`。

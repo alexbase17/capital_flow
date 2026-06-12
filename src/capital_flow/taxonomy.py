@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import json
+from pathlib import Path
 import re
 
 
@@ -29,6 +32,10 @@ BROAD_BENCHMARK_LABELS: dict[str, str] = {
     "恒生中国企业指数(H股指数)": "H股指数",
     "上证综合指数": "上证指数",
     "上证科创板200指数": "科创200",
+    "深证50指数": "深证50",
+    "国证2000指数": "国证2000",
+    "中证800指数": "中证800",
+    "中小企业100指数": "中小100",
 }
 
 BROAD_INDEX_CODES: dict[str, str] = {
@@ -68,6 +75,13 @@ STRATEGY_BENCHMARK_LABELS: dict[str, str] = {
     "国证自由现金流指数": "现金流",
     "国证大盘价值指数": "价值",
     "中证科技优势成长50策略指数": "成长",
+    "国证大盘成长指数": "成长",
+    "中证智选高股息策略指数": "红利",
+    "中证红利低波动100指数": "红利低波",
+    "国证成长100指数": "成长",
+    "国证价值100指数": "价值",
+    "中证港股通央企红利指数": "港股红利",
+    "中证中央企业红利指数": "红利",
 }
 
 STRATEGY_INDEX_PATTERNS: list[tuple[str, str]] = [
@@ -86,6 +100,7 @@ INDUSTRY_BENCHMARK_LABELS: dict[str, str] = {
     "中证人工智能主题指数": "人工智能",
     "中证人工智能产业指数": "人工智能",
     "中证云计算与大数据主题指数": "云计算",
+    "中证工业互联网主题指数": "工业互联网",
     "中证创新药产业指数": "创新药",
     "中证生物医药指数": "生物医药",
     "国证生物医药指数": "生物医药",
@@ -114,14 +129,19 @@ INDUSTRY_BENCHMARK_LABELS: dict[str, str] = {
     "中证5G通信主题指数": "通信",
     "国证通信指数": "通信",
     "国证商用卫星通信产业指数": "卫星通信",
+    "中证卫星产业指数": "卫星通信",
     "中证科技传媒通信150指数": "TMT",
     "中证机器人指数": "机器人",
+    "国证机器人产业指数": "机器人",
     "中证新能源指数": "新能源",
+    "创业板新能源指数": "新能源",
     "中证新能源汽车指数": "新能源车",
     "国证新能源车指数": "新能源车",
     "中证智能汽车主题指数": "智能汽车",
     "中证全指汽车指数": "汽车",
     "中证电池主题指数": "电池",
+    "国证新能源车电池指数": "电池",
+    "国证新能源电池指数": "电池",
     "中证光伏产业指数": "光伏",
     "中证光伏龙头30指数": "光伏",
     "中证电网设备主题指数": "电网设备",
@@ -145,12 +165,16 @@ INDUSTRY_BENCHMARK_LABELS: dict[str, str] = {
     "中证白酒指数": "酒",
     "中证酒指数": "酒",
     "中证食品饮料指数": "食品饮料",
+    "中证全指食品指数": "食品",
     "中证全指家用电器指数": "家电",
+    "中证家电龙头指数": "家电",
     "中证传媒指数": "传媒",
     "中证动漫游戏指数": "游戏",
     "中证国防指数": "军工",
     "中证军工指数": "军工",
     "中证有色金属指数": "有色金属",
+    "中证工业有色金属主题指数": "有色金属",
+    "中证有色金属矿业主题指数": "有色金属",
     "中证稀土产业指数": "稀土",
     "中证钢铁指数": "钢铁",
     "中证煤炭指数": "煤炭",
@@ -161,10 +185,12 @@ INDUSTRY_BENCHMARK_LABELS: dict[str, str] = {
     "国证绿色电力指数": "绿色电力",
     "中证能源指数": "能源",
     "国证石油天然气指数": "石油天然气",
+    "中证油气资源指数": "石油天然气",
     "中证农业主题指数": "农业",
     "中证全指农牧渔指数": "农牧渔",
     "国证粮食产业指数": "粮食",
     "中证畜牧养殖指数": "畜牧养殖",
+    "中证畜牧养殖产业指数": "畜牧养殖",
     "中证机械指数": "机械",
     "中证电子指数": "电子",
     "中证旅游主题指数": "旅游",
@@ -173,17 +199,41 @@ INDUSTRY_BENCHMARK_LABELS: dict[str, str] = {
     "中证全指建筑材料指数": "建材",
     "中证智选船舶产业指数": "船舶",
     "中证通用航空主题指数": "通用航空",
+    "国证通用航空产业指数": "通用航空",
+    "国证航天航空行业指数": "航空航天",
+    "中证金融科技主题指数": "金融科技",
+    "中证数字经济主题指数": "数字经济",
+    "中证诚通国企数字经济指数": "数字经济",
+    "中证全指集成电路指数": "芯片",
+    "国证消费电子主题指数": "消费电子",
+    "中证工程机械主题指数": "机械",
+    "中证科创创业人工智能指数": "人工智能",
+    "创业板人工智能指数": "人工智能",
+    "创业板软件指数": "软件服务",
+    "中证沪港深云计算产业指数": "云计算",
+    "中证汽车零部件主题指数": "汽车",
+    "中证半导体行业精选指数": "半导体",
+    "中证半导体材料设备主题指数": "半导体",
     "恒生科技指数": "恒生科技",
     "中证港股通互联网指数": "港股互联网",
+    "国证港股通互联网指数": "港股互联网",
     "中证港股通科技指数": "港股科技",
     "国证港股通科技指数": "港股科技",
     "恒生港股通科技主题指数": "港股科技",
     "恒生港股通中国科技指数": "港股科技",
     "中证港股通医药卫生综合指数": "港股医药",
     "中证港股通消费主题指数": "港股消费",
+    "国证港股通消费主题指数": "港股消费",
     "中证港股通信息技术综合指数": "港股信息技术",
     "恒生生物科技指数": "港股生物科技",
     "中证港股通中国100指数": "港股宽基",
+    "中证港股通医疗主题指数": "港股医疗",
+    "恒生医疗保健指数": "港股医疗",
+    "恒生港股通汽车主题指数": "港股汽车",
+    "中证港股通汽车产业主题指数": "港股汽车",
+    "恒生互联网科技业指数": "港股互联网",
+    "国证港股通创新药指数": "港股创新药",
+    "恒生港股通创新药指数": "港股创新药",
 }
 
 INDUSTRY_INDEX_PATTERNS: list[tuple[str, str]] = [
@@ -281,6 +331,13 @@ NON_TARGET_ETF_MARKERS = NON_EQUITY_ETF_MARKERS + (
     "东证",
     "亚太",
     "沙特",
+    "巴西",
+    "印度",
+    "越南",
+    "韩国",
+    "英国",
+    "欧洲",
+    "全球",
     "美国",
     "日本",
     "REIT",
@@ -288,29 +345,154 @@ NON_TARGET_ETF_MARKERS = NON_EQUITY_ETF_MARKERS + (
 )
 
 
+@dataclass(frozen=True)
+class TaxonomyRecord:
+    benchmark: str
+    section: str
+    label: str
+    market: str
+    asset_class: str
+    taxonomy_type: str
+    parent_bucket: str = ""
+    index_code: str = ""
+
+
+@dataclass(frozen=True)
+class ClassificationResult:
+    section: str
+    label: str
+    normalized_benchmark: str
+    source: str
+    confidence: str
+    reason: str
+    market: str = ""
+    taxonomy_type: str = ""
+    parent_bucket: str = ""
+
+
+TAXONOMY_DATA_PATH = Path(__file__).with_name("taxonomy_data.json")
+VALID_TAXONOMY_SECTIONS = {"broad", "strategy", "a_industry", "hk_industry", "excluded"}
+
+
+def load_taxonomy_records(path: Path = TAXONOMY_DATA_PATH) -> dict[str, TaxonomyRecord]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    records: dict[str, TaxonomyRecord] = {}
+    for raw_record in payload.get("records", []):
+        record = TaxonomyRecord(
+            benchmark=str(raw_record.get("benchmark") or "").strip(),
+            section=str(raw_record.get("section") or "").strip(),
+            label=str(raw_record.get("label") or "").strip(),
+            market=str(raw_record.get("market") or "").strip(),
+            asset_class=str(raw_record.get("asset_class") or "").strip(),
+            taxonomy_type=str(raw_record.get("taxonomy_type") or "").strip(),
+            parent_bucket=str(raw_record.get("parent_bucket") or "").strip(),
+            index_code=str(raw_record.get("index_code") or "").strip(),
+        )
+        validate_taxonomy_record(record)
+        if record.benchmark in records:
+            raise ValueError(f"duplicate taxonomy benchmark: {record.benchmark}")
+        records[record.benchmark] = record
+    return records
+
+
+def validate_taxonomy_record(record: TaxonomyRecord) -> None:
+    if not record.benchmark:
+        raise ValueError("taxonomy benchmark is required")
+    if record.section not in VALID_TAXONOMY_SECTIONS:
+        raise ValueError(f"invalid taxonomy section for {record.benchmark}: {record.section}")
+    if record.section != "excluded" and not record.label:
+        raise ValueError(f"taxonomy label is required for {record.benchmark}")
+    if not record.market or not record.asset_class or not record.taxonomy_type:
+        raise ValueError(f"taxonomy metadata is incomplete for {record.benchmark}")
+
+
+EXACT_BENCHMARK_RECORDS = load_taxonomy_records()
+BROAD_BENCHMARK_LABELS = {
+    benchmark: record.label for benchmark, record in EXACT_BENCHMARK_RECORDS.items() if record.section == "broad"
+}
+STRATEGY_BENCHMARK_LABELS = {
+    benchmark: record.label for benchmark, record in EXACT_BENCHMARK_RECORDS.items() if record.section == "strategy"
+}
+INDUSTRY_BENCHMARK_LABELS = {
+    benchmark: record.label
+    for benchmark, record in EXACT_BENCHMARK_RECORDS.items()
+    if record.section in {"a_industry", "hk_industry"}
+}
+BROAD_INDEX_CODES = {
+    record.label: record.index_code
+    for record in EXACT_BENCHMARK_RECORDS.values()
+    if record.section == "broad" and record.index_code
+}
+
+
 def classify_etf_group(name: str, benchmark: str = "", invest_type: str = "") -> tuple[str, str] | None:
+    result = classify_etf_detail(name, benchmark=benchmark, invest_type=invest_type)
+    if result is None:
+        return None
+    return result.section, result.label
+
+
+def classify_etf_detail(name: str, benchmark: str = "", invest_type: str = "") -> ClassificationResult | None:
     clean = name.replace("Ｎ", "N")
     normalized_benchmark = normalize_benchmark(benchmark)
-    is_hk = _is_hk_exposure(clean, normalized_benchmark)
-    benchmark_label = broad_label_from_benchmark(benchmark, invest_type)
-    if benchmark_label:
-        return "broad", benchmark_label
+    exact_result = exact_classification_from_benchmark(normalized_benchmark, invest_type)
+    if exact_result:
+        return exact_result
     if is_non_equity_etf(clean, normalized_benchmark):
         return None
-    strategy_label = _strategy_label_from_benchmark(normalized_benchmark)
+    is_hk = _is_hk_exposure(clean, normalized_benchmark)
+    strategy_label, strategy_source = _strategy_label_from_benchmark(normalized_benchmark)
     if strategy_label:
-        return "strategy", hk_label(strategy_label) if is_hk else strategy_label
-    industry_label = _industry_label_from_benchmark(normalized_benchmark)
+        return ClassificationResult(
+            section="strategy",
+            label=hk_label(strategy_label) if is_hk else strategy_label,
+            normalized_benchmark=normalized_benchmark,
+            source=strategy_source,
+            confidence="high" if strategy_source == "benchmark_exact" else "medium",
+            reason="strategy factor benchmark mapping",
+        )
+    industry_label, industry_source = _industry_label_from_benchmark(normalized_benchmark)
     if industry_label:
-        return ("hk_industry" if is_hk else "a_industry"), hk_label(industry_label) if is_hk else industry_label
+        return ClassificationResult(
+            section="hk_industry" if is_hk else "a_industry",
+            label=hk_label(industry_label) if is_hk else industry_label,
+            normalized_benchmark=normalized_benchmark,
+            source=industry_source,
+            confidence="high" if industry_source == "benchmark_exact" else "medium",
+            reason="industry or theme benchmark mapping",
+        )
     return None
+
+
+def exact_classification_from_benchmark(normalized_benchmark: str, invest_type: str) -> ClassificationResult | None:
+    record = EXACT_BENCHMARK_RECORDS.get(normalized_benchmark)
+    if record is None:
+        return None
+    if record.section == "excluded":
+        return None
+    if record.section == "broad" and invest_type and invest_type != "被动指数型":
+        return None
+    return ClassificationResult(
+        section=record.section,
+        label=record.label,
+        normalized_benchmark=normalized_benchmark,
+        source="benchmark_exact",
+        confidence="high",
+        reason="taxonomy master data exact benchmark mapping",
+        market=record.market,
+        taxonomy_type=record.taxonomy_type,
+        parent_bucket=record.parent_bucket,
+    )
 
 
 def broad_label_from_benchmark(benchmark: str, invest_type: str) -> str | None:
     if invest_type and invest_type != "被动指数型":
         return None
     normalized = normalize_benchmark(benchmark)
-    return BROAD_BENCHMARK_LABELS.get(normalized)
+    record = EXACT_BENCHMARK_RECORDS.get(normalized)
+    if record and record.section == "broad":
+        return record.label
+    return None
 
 
 def normalize_benchmark(benchmark: str) -> str:
@@ -345,28 +527,22 @@ def normalize_benchmark(benchmark: str) -> str:
     return text.strip()
 
 
-def _industry_label_from_benchmark(normalized_benchmark: str) -> str | None:
+def _industry_label_from_benchmark(normalized_benchmark: str) -> tuple[str | None, str]:
     if not normalized_benchmark:
-        return None
-    label = INDUSTRY_BENCHMARK_LABELS.get(normalized_benchmark)
-    if label:
-        return label
+        return None, "missing_benchmark"
     for pattern, pattern_label in INDUSTRY_INDEX_PATTERNS:
         if pattern in normalized_benchmark:
-            return pattern_label
-    return None
+            return pattern_label, "benchmark_pattern"
+    return None, "unmatched"
 
 
-def _strategy_label_from_benchmark(normalized_benchmark: str) -> str | None:
+def _strategy_label_from_benchmark(normalized_benchmark: str) -> tuple[str | None, str]:
     if not normalized_benchmark:
-        return None
-    label = STRATEGY_BENCHMARK_LABELS.get(normalized_benchmark)
-    if label:
-        return label
+        return None, "missing_benchmark"
     for pattern, pattern_label in STRATEGY_INDEX_PATTERNS:
         if pattern in normalized_benchmark:
-            return pattern_label
-    return None
+            return pattern_label, "benchmark_pattern"
+    return None, "unmatched"
 
 
 def is_non_equity_etf(clean_name: str, normalized_benchmark: str) -> bool:
@@ -392,4 +568,7 @@ def _is_hk_exposure(clean_name: str, normalized_benchmark: str) -> bool:
 def index_code_for_group(section: str, index_name: str) -> str:
     if section != "broad":
         return ""
+    for record in EXACT_BENCHMARK_RECORDS.values():
+        if record.section == "broad" and record.label == index_name and record.index_code:
+            return record.index_code
     return BROAD_INDEX_CODES.get(index_name, "")

@@ -1,7 +1,12 @@
 import unittest
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
+from src.capital_flow import fetcher
 from src.capital_flow.service import (
     EtfFlowGroup,
+    _aligned_fund_dates,
+    active_target_etf_codes,
     _change_pct,
     _etf_flows_for_window,
     _flow_price_for_etf,
@@ -9,10 +14,58 @@ from src.capital_flow.service import (
     _section_payload,
 )
 from src.capital_flow.schema import validate_capital_flow_payload
-from src.capital_flow.taxonomy import classify_etf_group
+from src.capital_flow.taxonomy import EXACT_BENCHMARK_RECORDS, classify_etf_detail, classify_etf_group, load_taxonomy_records
+from src.capital_flow.taxonomy_audit import audit_fund_taxonomy
+from src.capital_flow.taxonomy_exposure import (
+    a_share_benchmark_impacts,
+    canonical_index_name,
+    index_provider_hint,
+    index_name_aliases,
+    label_consistency_audit,
+    resolve_index_code,
+    sw2021_exposure_from_weight_rows,
+)
 
 
 class CapitalFlowServiceTests(unittest.TestCase):
+    def test_dated_fetcher_maps_are_persistently_cached(self):
+        class FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def query(self, api_name, params=None, fields=None):
+                self.calls += 1
+                if api_name != "fund_daily":
+                    raise AssertionError(api_name)
+                return [{"ts_code": "510300.SH", "close": "4.2"}]
+
+        client = FakeClient()
+        with TemporaryDirectory() as tmpdir, patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)):
+            self.assertEqual(fetcher.fund_daily_map(client, "20250102"), {"510300.SH": 4.2})
+            self.assertEqual(fetcher.fund_daily_map(client, "20250102"), {"510300.SH": 4.2})
+
+        self.assertEqual(client.calls, 1)
+
+    def test_fetcher_cache_can_be_disabled_for_diagnostics(self):
+        class FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def query(self, api_name, params=None, fields=None):
+                self.calls += 1
+                return [{"ts_code": "510300.SH", "close": str(4 + self.calls)}]
+
+        client = FakeClient()
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)),
+            patch.dict(fetcher.os.environ, {"CAPITAL_FLOW_DISABLE_FILE_CACHE": "1"}),
+        ):
+            self.assertEqual(fetcher.fund_daily_map(client, "20250102"), {"510300.SH": 5.0})
+            self.assertEqual(fetcher.fund_daily_map(client, "20250102"), {"510300.SH": 6.0})
+
+        self.assertEqual(client.calls, 2)
+
     def test_classifies_broad_a_share_etfs(self):
         self.assertEqual(
             classify_etf_group("沪深300ETF华泰柏瑞", benchmark="沪深300指数收益率", invest_type="被动指数型"),
@@ -30,6 +83,61 @@ class CapitalFlowServiceTests(unittest.TestCase):
             classify_etf_group("科创创业50ETF华夏", benchmark="中证科创创业50指数收益率", invest_type="被动指数型"),
             ("broad", "科创创业50"),
         )
+
+    def test_taxonomy_master_data_loads_required_exact_mappings(self):
+        records = load_taxonomy_records()
+
+        self.assertGreater(len(records), 100)
+        self.assertEqual(records["沪深300指数"].section, "broad")
+        self.assertEqual(records["沪深300指数"].index_code, "000300.SH")
+        self.assertEqual(records["中证金融科技主题指数"].taxonomy_type, "theme")
+        self.assertEqual(records["中证金融科技主题指数"].parent_bucket, "科技")
+        self.assertEqual(records["中证全指证券公司指数"].index_code, "h20168.CSI")
+        self.assertEqual(records["中证全指通信设备指数"].index_code, "h21160.CSI")
+        self.assertEqual(records["中证细分化工产业主题指数"].index_code, "000813.CSI")
+        self.assertEqual(records["中证创新药产业指数"].index_code, "931152.CSI")
+        self.assertEqual(records["中证银行指数"].index_code, "399986.CSI")
+        self.assertIn("恒生港股通汽车主题指数", records)
+        self.assertEqual(records["沪深300指数"], EXACT_BENCHMARK_RECORDS["沪深300指数"])
+
+    def test_index_name_aliases_support_index_basic_matching(self):
+        aliases = index_name_aliases("中证人工智能主题")
+        self.assertIn("中证人工智能主题", aliases)
+        self.assertIn("中证人工智能主题指数", aliases)
+        self.assertIn("人工智能", aliases)
+        self.assertIn("中证人工智能主题", index_name_aliases("中证人工智能主题指数"))
+        self.assertIn("人工智能", index_name_aliases("中证人工智能主题指数"))
+        self.assertEqual(canonical_index_name("中证人工智能主题指数"), "人工智能")
+        self.assertEqual(index_provider_hint("国证生物医药指数"), "SZSE")
+
+    def test_resolve_index_code_prefers_master_data_then_index_lookup(self):
+        records = load_taxonomy_records()
+
+        self.assertEqual(resolve_index_code(records["沪深300指数"], {"沪深300指数": "SHOULD_NOT_USE"}), "000300.SH")
+        self.assertEqual(resolve_index_code(records["中证金融科技主题指数"], {"中证金融科技主题指数": "930986.CSI"}), "930986.CSI")
+
+    def test_resolve_index_code_requires_unique_provider_compatible_match(self):
+        records = load_taxonomy_records()
+        csi_record = records["中证人工智能主题指数"]
+        szse_record = records["国证消费电子主题指数"]
+        lookup = {
+            "canonical:人工智能": [
+                {"code": "931071.CSI", "name": "中证人工智能主题指数", "market": "CSI", "publisher": "中证指数有限公司"},
+                {"code": "399000.SZ", "name": "国证人工智能指数", "market": "SZSE", "publisher": "深圳证券信息有限公司"},
+            ],
+            "canonical:消费电子": [
+                {"code": "399123.SZ", "name": "国证消费电子主题指数", "market": "SZSE", "publisher": "深圳证券信息有限公司"},
+                {"code": "931999.CSI", "name": "中证消费电子指数", "market": "CSI", "publisher": "中证指数有限公司"},
+            ],
+            "canonical:云计算": [
+                {"code": "931470.CSI", "name": "中证云计算与大数据主题指数", "market": "CSI", "publisher": "中证指数有限公司"},
+                {"code": "931471.CSI", "name": "中证云计算产业指数", "market": "CSI", "publisher": "中证指数有限公司"},
+            ],
+        }
+
+        self.assertEqual(resolve_index_code(csi_record, lookup), "931071.CSI")
+        self.assertEqual(resolve_index_code(szse_record, lookup), "399123.SZ")
+        self.assertEqual(resolve_index_code(records["中证云计算与大数据主题指数"], lookup), "")
 
     def test_broad_classification_excludes_strategy_variants(self):
         self.assertIsNone(
@@ -114,6 +222,28 @@ class CapitalFlowServiceTests(unittest.TestCase):
             classify_etf_group("绿色电力ETF嘉实", benchmark="国证绿色电力指数收益率", invest_type="被动指数型"),
             ("a_industry", "绿色电力"),
         )
+        self.assertEqual(
+            classify_etf_group("金融科技ETF汇添富", benchmark="中证金融科技主题指数收益率", invest_type="被动指数型"),
+            ("a_industry", "金融科技"),
+        )
+        self.assertEqual(
+            classify_etf_group("消费电子ETF鹏华", benchmark="国证消费电子主题指数收益率", invest_type="被动指数型"),
+            ("a_industry", "消费电子"),
+        )
+        self.assertEqual(
+            classify_etf_group("港股通汽车ETF易方达", benchmark="恒生港股通汽车主题指数收益率", invest_type="被动指数型"),
+            ("hk_industry", "港股汽车"),
+        )
+
+    def test_additional_broad_mappings_are_explicit(self):
+        self.assertEqual(
+            classify_etf_group("深证50ETF易方达", benchmark="深证50指数收益率", invest_type="被动指数型"),
+            ("broad", "深证50"),
+        )
+        self.assertEqual(
+            classify_etf_group("国证2000ETF博时", benchmark="国证2000指数收益率", invest_type="被动指数型"),
+            ("broad", "国证2000"),
+        )
 
     def test_classification_does_not_fall_back_to_fund_name_when_benchmark_missing(self):
         self.assertIsNone(classify_etf_group("沪深300ETF华泰柏瑞"))
@@ -125,6 +255,156 @@ class CapitalFlowServiceTests(unittest.TestCase):
             ("a_industry", "人工智能"),
         )
         self.assertIsNone(classify_etf_group("创业板人工智能ETF华宝"))
+
+    def test_classification_detail_marks_exact_and_pattern_confidence(self):
+        exact = classify_etf_detail(
+            "创业板人工智能ETF华宝",
+            benchmark="中证人工智能主题指数收益率",
+            invest_type="被动指数型",
+        )
+        pattern = classify_etf_detail(
+            "机器人ETF样本",
+            benchmark="中证机器人产业指数收益率",
+            invest_type="被动指数型",
+        )
+
+        self.assertIsNotNone(exact)
+        self.assertEqual(exact.source, "benchmark_exact")
+        self.assertEqual(exact.confidence, "high")
+        self.assertEqual(exact.taxonomy_type, "theme")
+        self.assertEqual(exact.parent_bucket, "科技")
+        self.assertIsNotNone(pattern)
+        self.assertEqual(pattern.source, "benchmark_pattern")
+        self.assertEqual(pattern.confidence, "medium")
+
+    def test_taxonomy_audit_reports_unclassified_and_pattern_samples(self):
+        audit = audit_fund_taxonomy(
+            {
+                "159819.SZ": {
+                    "name": "人工智能ETF易方达",
+                    "benchmark": "中证人工智能主题指数收益率",
+                    "invest_type": "被动指数型",
+                },
+                "159770.SZ": {
+                    "name": "机器人ETF样本",
+                    "benchmark": "中证机器人产业指数收益率",
+                    "invest_type": "被动指数型",
+                },
+                "159999.SZ": {
+                    "name": "未知主题ETF样本",
+                    "benchmark": "未知主题指数收益率",
+                    "invest_type": "被动指数型",
+                },
+                "511880.SH": {
+                    "name": "货币ETF样本",
+                    "benchmark": "中证货币基金指数收益率",
+                    "invest_type": "被动指数型",
+                },
+            }
+        )
+
+        self.assertEqual(audit["summary"]["total_etf"], 4)
+        self.assertEqual(audit["summary"]["excluded_non_target"], 1)
+        self.assertEqual(audit["summary"]["target_equity_etf"], 3)
+        self.assertEqual(audit["summary"]["classified_target_equity"], 2)
+        self.assertEqual(audit["summary"]["unclassified_target_equity"], 1)
+        self.assertEqual(audit["by_source"], {"benchmark_exact": 1, "benchmark_pattern": 1})
+        self.assertEqual(audit["by_confidence"], {"high": 1, "medium": 1})
+        self.assertEqual(audit["by_taxonomy_type"], {"theme": 1})
+        self.assertEqual(audit["by_parent_bucket"], {"科技": 1})
+        self.assertEqual(audit["unclassified_samples"][0]["code"], "159999.SZ")
+        self.assertEqual(audit["pattern_classified_samples"][0]["label"], "机器人")
+
+    def test_sw2021_exposure_aggregates_latest_index_weights(self):
+        exposure = sw2021_exposure_from_weight_rows(
+            [
+                {"trade_date": "20260601", "con_code": "000001.SZ", "weight": 30},
+                {"trade_date": "20260601", "con_code": "000002.SZ", "weight": 20},
+                {"trade_date": "20260612", "con_code": "000001.SZ", "weight": 35},
+                {"trade_date": "20260612", "con_code": "000002.SZ", "weight": 25},
+                {"trade_date": "20260612", "con_code": "000003.SZ", "weight": 10},
+            ],
+            {"000001.SZ": "电子", "000002.SZ": "计算机"},
+        )
+
+        self.assertEqual(exposure["weight_date"], "20260612")
+        self.assertEqual(exposure["constituent_count"], 3)
+        self.assertEqual(exposure["top_industry"], "电子")
+        self.assertEqual(exposure["top_industry_weight"], 35.0)
+        self.assertEqual(exposure["top3_weight"], 60.0)
+        self.assertEqual(exposure["unknown_weight"], 10.0)
+
+    def test_a_share_benchmark_impacts_prioritizes_current_scale(self):
+        impacts = a_share_benchmark_impacts(
+            {
+                "159819.SZ": {
+                    "name": "人工智能ETF易方达",
+                    "benchmark": "中证人工智能主题指数收益率",
+                    "invest_type": "被动指数型",
+                },
+                "515050.SH": {
+                    "name": "通信ETF华夏",
+                    "benchmark": "中证5G通信主题指数收益率",
+                    "invest_type": "被动指数型",
+                },
+                "511880.SH": {
+                    "name": "货币ETF样本",
+                    "benchmark": "中证货币基金指数收益率",
+                    "invest_type": "被动指数型",
+                },
+            },
+            {"159819.SZ": 2.0, "515050.SH": 1.0, "511880.SH": 100.0},
+            {"159819.SZ": 50000, "515050.SH": 10000, "511880.SH": 100000},
+        )
+
+        self.assertEqual(impacts["中证人工智能主题指数"]["scale_yi"], 10.0)
+        self.assertEqual(impacts["中证人工智能主题指数"]["etf_count"], 1)
+        self.assertEqual(impacts["中证5G通信主题指数"]["scale_yi"], 1.0)
+        self.assertNotIn("中证货币基金指数", impacts)
+
+    def test_label_consistency_flags_mixed_top_industries(self):
+        audit = label_consistency_audit(
+            [
+                {
+                    "label": "人工智能",
+                    "benchmark": "中证人工智能主题指数",
+                    "scale_yi": 100,
+                    "top_industry": "通信",
+                    "top_industry_weight": 39.87,
+                    "unknown_weight": 0,
+                },
+                {
+                    "label": "人工智能",
+                    "benchmark": "创业板人工智能指数",
+                    "scale_yi": 80,
+                    "top_industry": "计算机",
+                    "top_industry_weight": 55.0,
+                    "unknown_weight": 0,
+                },
+                {
+                    "label": "软件服务",
+                    "benchmark": "中证软件服务指数",
+                    "scale_yi": 20,
+                    "top_industry": "计算机",
+                    "top_industry_weight": 95.0,
+                    "unknown_weight": 0,
+                },
+                {
+                    "label": "软件服务",
+                    "benchmark": "创业板软件指数",
+                    "scale_yi": 10,
+                    "top_industry": "计算机",
+                    "top_industry_weight": 93.0,
+                    "unknown_weight": 0,
+                },
+            ],
+        )
+
+        self.assertEqual(audit["label_count"], 2)
+        self.assertEqual(audit["consistent_multi_index_label_count"], 1)
+        self.assertEqual(audit["flagged_label_count"], 1)
+        self.assertEqual(audit["flagged_samples"][0]["label"], "人工智能")
+        self.assertEqual(audit["flagged_samples"][0]["scale_yi"], 180)
 
     def test_broad_benchmark_wins_over_issuer_industry_word(self):
         self.assertEqual(
@@ -230,6 +510,9 @@ class CapitalFlowServiceTests(unittest.TestCase):
 
     def test_non_equity_theme_is_ignored(self):
         self.assertIsNone(classify_etf_group("黄金ETF华安"))
+        self.assertIsNone(
+            classify_etf_group("巴西ETF华夏", benchmark="巴西伊博维斯帕指数收益率", invest_type="被动指数型")
+        )
 
     def test_flow_price_prefers_same_day_nav(self):
         self.assertEqual(_flow_price_for_etf("510300.SH", 4.9, {"510300.SH": 4.8123}), (4.8123, "nav", "净值口径"))
@@ -395,15 +678,130 @@ class CapitalFlowServiceTests(unittest.TestCase):
 
         row = payload["sections"]["broad"]["rows"][0]
         self.assertEqual(row["net_flow_yi"], 1.19)
+        self.assertEqual(row["start_scale_yi"], 3.42)
         self.assertEqual(row["daily_net_flow"], [{"date": "2026-06-10", "value": 0.39}, {"date": "2026-06-11", "value": 0.8}])
+
+    def test_etf_flow_ratio_uses_window_start_scale(self):
+        funds = {
+            "510300.SH": {
+                "name": "沪深300ETF华泰柏瑞",
+                "benchmark": "沪深300指数收益率",
+                "invest_type": "被动指数型",
+            },
+        }
+        payload = _etf_flows_for_window(
+            funds,
+            ["20260611", "20260610"],
+            1,
+            daily_prices={
+                "20260611": {"510300.SH": 2.0},
+                "20260610": {"510300.SH": 1.0},
+            },
+            daily_navs={"20260611": {}},
+            daily_shares={
+                "20260611": {"510300.SH": 20000},
+                "20260610": {"510300.SH": 10000},
+            },
+        )
+
+        row = payload["sections"]["broad"]["rows"][0]
+        self.assertEqual(row["net_flow_yi"], 2.0)
+        self.assertEqual(row["scale_yi"], 4.0)
+        self.assertEqual(row["start_scale_yi"], 1.0)
+        self.assertEqual(row["net_flow_ratio"], 200.0)
+
+    def test_aligned_fund_dates_uses_latest_complete_price_share_date(self):
+        dates, status = _aligned_fund_dates(
+            ["20260612", "20260611", "20260610"],
+            {
+                "20260612": {"510300.SH": 4.1},
+                "20260611": {"510300.SH": 4.0},
+                "20260610": {"510300.SH": 3.9},
+            },
+            {
+                "20260612": {},
+                "20260611": {"510300.SH": 10000},
+                "20260610": {"510300.SH": 9000},
+            },
+            2,
+        )
+
+        self.assertEqual(dates, ["20260611", "20260610"])
+        self.assertEqual(status["status"], "fallback")
+        self.assertEqual(status["requested_latest_date"], "2026-06-12")
+        self.assertEqual(status["as_of_date"], "2026-06-11")
+        self.assertEqual(status["price_date"], "2026-06-11")
+        self.assertEqual(status["share_date"], "2026-06-11")
+        self.assertTrue(status["is_aligned"])
+
+    def test_aligned_fund_dates_requires_all_target_etfs_on_as_of_date(self):
+        dates, status = _aligned_fund_dates(
+            ["20260612", "20260611", "20260610"],
+            {
+                "20260612": {"510300.SH": 4.1},
+                "20260611": {"510300.SH": 4.0, "510500.SH": 6.0},
+                "20260610": {"510300.SH": 3.9},
+            },
+            {
+                "20260612": {"510300.SH": 10000, "510500.SH": 8000},
+                "20260611": {"510300.SH": 9900, "510500.SH": 7900},
+                "20260610": {"510300.SH": 9800},
+            },
+            2,
+            required_codes={"510300.SH", "510500.SH"},
+        )
+
+        self.assertEqual(dates, ["20260611", "20260610"])
+        self.assertEqual(status["status"], "fallback")
+        self.assertEqual(status["as_of_date"], "2026-06-11")
+        self.assertEqual(status["required_etf_count"], 2)
+        self.assertEqual(status["missing_price_count"], 1)
+        self.assertEqual(status["missing_share_count"], 0)
+        self.assertIn("100% 对齐", status["fallback_reason"])
+
+    def test_active_target_etf_codes_uses_latest_interface_universe(self):
+        funds = {
+            "510300.SH": {"name": "沪深300ETF华泰柏瑞", "benchmark": "沪深300指数收益率"},
+            "510500.SH": {"name": "中证500ETF南方", "benchmark": "中证500指数收益率"},
+            "159001.SZ": {"name": "货币ETF", "benchmark": "中证货币基金指数收益率"},
+            "588000.SH": {"name": "科创50ETF华夏", "benchmark": "上证科创板50成份指数收益率"},
+        }
+
+        self.assertEqual(
+            active_target_etf_codes(
+                funds,
+                {"20260612": {"510300.SH": 4.1, "159001.SZ": 1.0, "588000.SH": 1.2}},
+                {"20260612": {"510500.SH": 5.2, "159001.SZ": 1.0}},
+                ["20260612"],
+            ),
+            {"510500.SH"},
+        )
+
+    def test_aligned_fund_dates_rejects_insufficient_complete_window(self):
+        with self.assertRaisesRegex(RuntimeError, "price/share data are not aligned"):
+            _aligned_fund_dates(
+                ["20260612", "20260611"],
+                {"20260612": {"510300.SH": 4.1}, "20260611": {"510300.SH": 4.0}},
+                {"20260612": {}, "20260611": {"510300.SH": 10000}},
+                2,
+            )
 
     def test_capital_flow_schema_rejects_missing_contract_key(self):
         payload = {
+            "data_status": {"etf": {}, "north_south": {}},
             "north_south": {"latest_date": "2026-06-11", "previous_date": "2026-06-10", "rows": []},
             "etf": {
                 "latest_date": "2026-06-11",
                 "previous_date": "2026-06-10",
                 "nav_date": "2026-06-11",
+                "data_status": {
+                    "status": "ready",
+                    "as_of_date": "2026-06-11",
+                    "price_date": "2026-06-11",
+                    "share_date": "2026-06-11",
+                    "nav_date": "2026-06-11",
+                    "is_aligned": True,
+                },
                 "coverage": {},
                 "quality": {},
                 "sections": {
@@ -421,6 +819,14 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "1d": {
                     "north_south": {"latest_date": "2026-06-11", "previous_date": "2026-06-11", "rows": []},
                     "etf": {
+                        "data_status": {
+                            "status": "ready",
+                            "as_of_date": "2026-06-11",
+                            "price_date": "2026-06-11",
+                            "share_date": "2026-06-11",
+                            "nav_date": "2026-06-11",
+                            "is_aligned": True,
+                        },
                         "sections": {
                             "broad": {"title": "宽基", "rows": []},
                             "strategy": {"title": "策略", "rows": []},

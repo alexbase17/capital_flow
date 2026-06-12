@@ -1,7 +1,7 @@
 const moneyFmt = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const sectionIds = ["total", "broad", "strategy", "a_industry", "hk_industry"];
-const windowKeys = ["1d", "3d", "7d", "30d"];
-const windowLabels = { "1d": "1日", "3d": "3日", "7d": "7日", "30d": "30日" };
+const sectionIds = ["total", "broad", "a_industry", "hk_industry", "strategy"];
+const windowKeys = ["1d", "3d", "5d", "20d", "60d"];
+const windowLabels = { "1d": "1日", "3d": "3日", "5d": "5日", "20d": "20日", "60d": "60日" };
 const tableSortState = {};
 const defaultTableSort = { key: "flow_1d", order: "desc" };
 let latestCapitalFlowData = null;
@@ -54,9 +54,9 @@ function renderTotalFlow(data) {
     ["北上资金", key => hsgtValue(data, key, "北上资金")],
     ["南下资金", key => hsgtValue(data, key, "南下资金")],
     ["宽基被动ETF", key => sectionValue(data, key, "broad")],
-    ["策略因子(>=20亿)", key => sectionValue(data, key, "strategy")],
     ["A股行业(>=20亿)", key => sectionValue(data, key, "a_industry")],
-    ["港股行业(>=20亿)", key => sectionValue(data, key, "hk_industry")]
+    ["港股行业(>=20亿)", key => sectionValue(data, key, "hk_industry")],
+    ["策略因子(>=20亿)", key => sectionValue(data, key, "strategy")]
   ];
   wrap.innerHTML = `
     <div class="flow-matrix" role="table" aria-label="ETF净申购金额">
@@ -75,6 +75,28 @@ function renderTotalFlow(data) {
       `).join("")}
     </div>
   `;
+}
+
+function renderDataStatus(data) {
+  const el = document.getElementById("dataStatus");
+  if (!el) return;
+  const status = data?.data_status?.etf || data?.etf?.data_status;
+  if (!status) {
+    el.textContent = "";
+    el.className = "data-status";
+    return;
+  }
+  const parts = [
+    `ETF数据日 ${status.as_of_date || "--"}`,
+    `价格日 ${status.price_date || "--"}`,
+    `份额日 ${status.share_date || "--"}`,
+    `净值日 ${status.nav_date || "收盘价估算"}`
+  ];
+  if (status.status === "fallback") {
+    parts.push("已回退到最近完整交易日");
+  }
+  el.textContent = parts.join(" · ");
+  el.className = `data-status${status.status === "fallback" ? " warning" : ""}`;
 }
 
 function rowKey(row) {
@@ -101,26 +123,23 @@ function mergeRowsForSection(data, sectionKey) {
         net_flow_yi: row.net_flow_yi,
         net_flow_ratio: row.net_flow_ratio,
         scale_yi: row.scale_yi,
+        start_scale_yi: row.start_scale_yi,
         daily_net_flow: row.daily_net_flow || []
       };
       if (key === "1d") current.change_pct = row.change_pct;
-      if (key === "30d") current.daily_net_flow = row.daily_net_flow || [];
+      if (key === "60d") current.daily_net_flow = row.daily_net_flow || [];
       rowsByKey.set(keyValue, current);
     });
   });
   return [...rowsByKey.values()].map(row => ({
     ...row,
     change_pct: row.metrics["1d"]?.change_pct ?? row.change_pct ?? null,
-    flow_1d: row.metrics["1d"]?.net_flow_yi ?? 0,
-    flow_3d: row.metrics["3d"]?.net_flow_yi ?? 0,
-    flow_7d: row.metrics["7d"]?.net_flow_yi ?? 0,
-    flow_30d: row.metrics["30d"]?.net_flow_yi ?? 0,
-    ratio_1d: row.metrics["1d"]?.net_flow_ratio ?? null,
-    ratio_3d: row.metrics["3d"]?.net_flow_ratio ?? null,
-    ratio_7d: row.metrics["7d"]?.net_flow_ratio ?? null,
-    ratio_30d: row.metrics["30d"]?.net_flow_ratio ?? null,
-    scale_yi: row.metrics["1d"]?.scale_yi ?? row.metrics["30d"]?.scale_yi ?? 0,
-    daily_net_flow: row.metrics["30d"]?.daily_net_flow || row.daily_net_flow || []
+    ...Object.fromEntries(windowKeys.flatMap(key => [
+      [`flow_${key}`, row.metrics[key]?.net_flow_yi ?? 0],
+      [`ratio_${key}`, row.metrics[key]?.net_flow_ratio ?? null]
+    ])),
+    scale_yi: row.metrics["1d"]?.scale_yi ?? row.metrics["60d"]?.scale_yi ?? 0,
+    daily_net_flow: row.metrics["60d"]?.daily_net_flow || row.daily_net_flow || []
   }));
 }
 
@@ -162,12 +181,26 @@ function bindTableSort(tableId, sectionKey) {
   });
 }
 
-function chartPath(points, width, height) {
-  if (points.length < 2) return "";
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function chartDomain(points) {
   const values = points.map(point => Number(point.value || 0));
   const min = Math.min(...values, 0);
   const max = Math.max(...values, 0);
   const span = max - min || 1;
+  return { min, max, span };
+}
+
+function chartPath(points, width, height) {
+  if (points.length < 2) return "";
+  const { min, span } = chartDomain(points);
   return points.map((point, index) => {
     const x = points.length === 1 ? 0 : (index / (points.length - 1)) * width;
     const y = height - ((Number(point.value || 0) - min) / span) * height;
@@ -175,29 +208,144 @@ function chartPath(points, width, height) {
   }).join(" ");
 }
 
-function renderFlowChart(row) {
-  const points = row.daily_net_flow || [];
-  if (!points.length) return '<div class="empty">暂无30日曲线数据</div>';
-  const width = 760;
-  const height = 150;
-  const path = chartPath(points, width, height);
-  const values = points.map(point => Number(point.value || 0));
-  const min = Math.min(...values, 0);
-  const max = Math.max(...values, 0);
-  const zeroY = height - ((0 - min) / ((max - min) || 1)) * height;
+function rollingWindowPoints(points, windowSize = 5) {
+  if (points.length < windowSize) return [];
+  return points.slice(windowSize - 1).map((point, index) => {
+    const windowPoints = points.slice(index, index + windowSize);
+    const value = windowPoints.reduce((total, item) => total + Number(item.value || 0), 0);
+    return {
+      date: point.date,
+      start_date: windowPoints[0]?.date || "",
+      end_date: point.date,
+      value
+    };
+  });
+}
+
+function tooltipPayload(value) {
+  return escapeHtml(value);
+}
+
+function renderDailyFlowBars(points, label) {
+  const width = 1040;
+  const height = 180;
+  const plotTop = 10;
+  const plotHeight = 150;
+  const { min, span } = chartDomain(points);
+  const zeroY = plotTop + plotHeight - ((0 - min) / span) * plotHeight;
+  const slot = width / Math.max(points.length, 1);
+  const barWidth = Math.max(3, Math.min(14, slot * 0.68));
+  const bars = points.map((point, index) => {
+    const value = Number(point.value || 0);
+    const valueY = plotTop + plotHeight - ((value - min) / span) * plotHeight;
+    const x = index * slot + (slot - barWidth) / 2;
+    const y = Math.min(valueY, zeroY);
+    const h = Math.max(1, Math.abs(zeroY - valueY));
+    const className = value >= 0 ? "flow-bar positive-bar" : "flow-bar negative-bar";
+    return `
+      <rect class="${className}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${h.toFixed(1)}"></rect>
+    `;
+  }).join("");
+  const tooltipValues = points.map(point => `${point.date} · 净申购金额 ${fmtYi(point.value)}`);
   return `
     <div class="flow-chart">
-      <div class="chart-title">30日净申购金额曲线</div>
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${formatIndexName(row)} 30日净申购金额曲线">
-        <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
-        <path d="${path}" class="flow-line"></path>
-      </svg>
+      <div class="chart-title">${label}</div>
+      <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(label)}">
+          <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
+          ${bars}
+        </svg>
+        <div class="chart-hover-layer" aria-hidden="true"></div>
+        <div class="chart-tooltip" aria-hidden="true"></div>
+      </div>
       <div class="chart-range">
         <span>${points[0]?.date || ""}</span>
         <span>${points[points.length - 1]?.date || ""}</span>
       </div>
     </div>
   `;
+}
+
+function renderRollingFlowLine(points, label) {
+  const rollingPoints = rollingWindowPoints(points, 5);
+  if (!rollingPoints.length) return '<div class="empty">暂无5日滑动窗口数据</div>';
+  const width = 1040;
+  const height = 180;
+  const plotTop = 10;
+  const plotHeight = 150;
+  const { min, span } = chartDomain(rollingPoints);
+  const zeroY = plotTop + plotHeight - ((0 - min) / span) * plotHeight;
+  const path = rollingPoints.map((point, index) => {
+    const x = rollingPoints.length === 1 ? 0 : (index / (rollingPoints.length - 1)) * width;
+    const y = plotTop + plotHeight - ((Number(point.value || 0) - min) / span) * plotHeight;
+    return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const dots = rollingPoints.map((point, index) => {
+    const x = rollingPoints.length === 1 ? 0 : (index / (rollingPoints.length - 1)) * width;
+    const y = plotTop + plotHeight - ((Number(point.value || 0) - min) / span) * plotHeight;
+    return `
+      <circle class="rolling-point ${flowClass(point.value)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.6"></circle>
+    `;
+  }).join("");
+  const tooltipValues = rollingPoints.map(point => `${point.start_date} 至 ${point.end_date} · 净申购金额 ${fmtYi(point.value)}`);
+  return `
+    <div class="flow-chart">
+      <div class="chart-title">${label}</div>
+      <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(label)}">
+          <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
+          <path d="${path}" class="flow-line"></path>
+          ${dots}
+        </svg>
+        <div class="chart-hover-layer" aria-hidden="true"></div>
+        <div class="chart-tooltip" aria-hidden="true"></div>
+      </div>
+      <div class="chart-range">
+        <span>${rollingPoints[0]?.start_date || ""}</span>
+        <span>${rollingPoints[rollingPoints.length - 1]?.end_date || ""}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderFlowChart(row) {
+  const points = row.daily_net_flow || [];
+  if (!points.length) return '<div class="empty">暂无60日净申购数据</div>';
+  return `
+    <div class="flow-chart-stack">
+      ${renderDailyFlowBars(points, "分天净申购金额")}
+      ${renderRollingFlowLine(points, "5日滑动窗口净申购金额")}
+    </div>
+  `;
+}
+
+function chartTooltipIndex(ratio, count) {
+  if (count <= 1) return 0;
+  return Math.min(count - 1, Math.max(0, Math.floor(ratio * count)));
+}
+
+function bindChartTooltips(scope) {
+  scope.querySelectorAll("[data-chart-tooltips]").forEach(plot => {
+    const tooltip = plot.querySelector(".chart-tooltip");
+    let values = [];
+    try {
+      values = JSON.parse(plot.dataset.chartTooltips || "[]");
+    } catch {
+      values = [];
+    }
+    if (!tooltip || !values.length) return;
+    plot.addEventListener("pointermove", event => {
+      const rect = plot.getBoundingClientRect();
+      const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+      const index = chartTooltipIndex(ratio, values.length);
+      tooltip.textContent = values[index] || "";
+      tooltip.style.left = `${ratio * 100}%`;
+      tooltip.classList.add("visible");
+    });
+    plot.addEventListener("pointerleave", () => {
+      tooltip.classList.remove("visible");
+    });
+  });
 }
 
 function metricCell(value, formatter = fmtYi) {
@@ -212,13 +360,14 @@ function renderTable(tableId, sectionKey) {
     return;
   }
   const displayRows = sortedRows(tableId, rows);
+  const columnCount = windowKeys.length * 2 + 3;
   table.innerHTML = `
     <thead>
       <tr>
         <th>指数 / 主题</th>
         <th class="num-head">${sortableHeader(tableId, "change_pct", "当日涨跌幅", "当日涨跌幅为该指数或主题下 ETF 最新交易日相对上一交易日的规模加权涨跌幅。")}</th>
-        ${windowKeys.map(key => `<th class="num-head">${sortableHeader(tableId, `flow_${key}`, `${windowLabels[key]}净申购金额`, "按窗口内每日 ETF 份额日期相邻差逐日乘以同日单位净值后累加；同日净值缺失时用当日收盘价估算。正数表示净申购，负数表示净赎回。")}</th>`).join("")}
-        ${windowKeys.map(key => `<th class="num-head">${sortableHeader(tableId, `ratio_${key}`, `${windowLabels[key]}净申购金额占比`, "净申购金额占比 = 对应窗口净申购金额 / 当日 ETF 规模。")}</th>`).join("")}
+        ${windowKeys.map(key => `<th class="num-head">${sortableHeader(tableId, `flow_${key}`, `${windowLabels[key]}净申购`, "按窗口内每日 ETF 份额日期相邻差逐日乘以同日单位净值后累加；同日净值缺失时用当日收盘价估算。正数表示净申购，负数表示净赎回。")}</th>`).join("")}
+        ${windowKeys.map(key => `<th class="num-head">${sortableHeader(tableId, `ratio_${key}`, `${windowLabels[key]}净申购占比`, "净申购占比 = 对应窗口净申购金额 / 窗口期初 ETF 规模。期初规模按该窗口起点交易日的份额和收盘价估算，用于衡量资金流入强度。")}</th>`).join("")}
         <th class="num-head">${sortableHeader(tableId, "scale_yi", "当日ETF规模")}</th>
       </tr>
     </thead>
@@ -230,17 +379,11 @@ function renderTable(tableId, sectionKey) {
           <tr class="data-row${expanded ? " expanded" : ""}" data-row-key="${key}" tabindex="0">
             <td class="name-cell"><span class="expand-mark">${expanded ? "−" : "+"}</span>${formatIndexName(row)}</td>
             ${metricCell(row.change_pct, fmtPct)}
-            ${metricCell(row.flow_1d)}
-            ${metricCell(row.flow_3d)}
-            ${metricCell(row.flow_7d)}
-            ${metricCell(row.flow_30d)}
-            ${metricCell(row.ratio_1d, fmtPct)}
-            ${metricCell(row.ratio_3d, fmtPct)}
-            ${metricCell(row.ratio_7d, fmtPct)}
-            ${metricCell(row.ratio_30d, fmtPct)}
+            ${windowKeys.map(key => metricCell(row[`flow_${key}`])).join("")}
+            ${windowKeys.map(key => metricCell(row[`ratio_${key}`], fmtPct)).join("")}
             <td class="num">${fmtYi(row.scale_yi)}</td>
           </tr>
-          ${expanded ? `<tr class="detail-row"><td colspan="11">${renderFlowChart(row)}</td></tr>` : ""}
+          ${expanded ? `<tr class="detail-row"><td colspan="${columnCount}">${renderFlowChart(row)}</td></tr>` : ""}
         `;
       }).join("")}
     </tbody>
@@ -255,6 +398,7 @@ function renderTable(tableId, sectionKey) {
       }
     });
   });
+  bindChartTooltips(table);
 }
 
 function toggleRow(tableId, sectionKey, key) {
@@ -336,11 +480,12 @@ async function loadCapitalFlow() {
 
 function renderCapitalFlow(data) {
   if (!data) return;
+  renderDataStatus(data);
   renderTotalFlow(data);
   renderTable("broadTable", "broad");
-  renderTable("strategyTable", "strategy");
   renderTable("aIndustryTable", "a_industry");
   renderTable("hkIndustryTable", "hk_industry");
+  renderTable("strategyTable", "strategy");
 }
 
 loadCapitalFlow();

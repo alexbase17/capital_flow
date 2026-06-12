@@ -7,14 +7,14 @@
 - 本仓库只负责市场资金流向分析。
 - 家庭资产、交易录入、持仓收益、产品净值、个人投资看板仍在 `/Users/nova/workspace/data_forge_ws`。
 - 两个项目独立运行、独立测试、独立提交；不要在本项目中引入 `portfolio.db` 或个人资产收益逻辑。
-- 本项目当前不落库，页面数据来自 API 实时拉取和进程内短缓存。
+- 本项目不写入业务数据库；TuShare 原始响应会缓存在本地 `data/tushare_cache/`，用于减少历史窗口重复拉取。
 
 ## 功能
 
-- ETF 净申购金额总览：展示 `1日 / 3日 / 7日 / 30日` 窗口。
+- ETF 净申购金额总览：展示 `1日 / 3日 / 5日 / 20日 / 60日` 交易日窗口。
 - 北上资金、南下资金、宽基被动 ETF、策略因子、A 股行业、港股行业分区展示。
-- 明细表展示当日涨跌幅、各窗口净申购金额、各窗口净申购金额占比、当日 ETF 规模。
-- 点击明细行可展开 30 日净申购金额曲线。
+- 明细表展示当日涨跌幅、各窗口净申购、各窗口净申购占比、当日 ETF 规模。
+- 点击明细行可展开 60 日净申购金额曲线。
 - 宽基 ETF 不设规模阈值；策略因子、A 股行业、港股行业只展示主题规模合计不低于 20 亿元的聚合项。
 
 ## 快速接手
@@ -58,7 +58,10 @@ src/capital_flow/routes.py          页面和 API 路由
 src/capital_flow/service.py         缓存、窗口选择、API payload 编排
 src/capital_flow/fetcher.py         TuShare 数据拉取
 src/capital_flow/calculator.py      北上/南下和 ETF 净申购计算
-src/capital_flow/taxonomy.py        ETF 宽基、策略因子、行业分类规则
+src/capital_flow/taxonomy_data.json ETF 精确指数分类主数据
+src/capital_flow/taxonomy.py        ETF 分类归一化、优先级和关键词兜底
+src/capital_flow/taxonomy_audit.py  ETF 分类覆盖率和置信度审计
+src/capital_flow/taxonomy_exposure.py ETF 成分股行业暴露审计
 src/capital_flow/schema.py          API 返回结构校验
 src/static/capital_flow.js          前端交互、表格、展开曲线
 src/static/capital_flow.css         页面样式
@@ -67,14 +70,24 @@ tests/                              单元测试和前端契约测试
 docs/                               架构、运维、数据源、变更记录
 ```
 
+## 数据缓存
+
+- 进程内 API payload 缓存 30 分钟。
+- TuShare 原始数据缓存在 `data/tushare_cache/`，该目录不提交 Git。
+- 近期交易日数据缓存 30 分钟，历史交易日数据长期复用；后续日常更新主要补新增交易日。
+- 排障时可设置 `CAPITAL_FLOW_DISABLE_FILE_CACHE=1` 临时绕过文件缓存。
+
 ## 计算口径摘要
 
 - 北上/南下资金：使用 TuShare `moneyflow_hsgt` 当日净额字段，万元折算为亿元后按窗口累加。
-- ETF 净申购金额：使用 `fund_share.fd_share` 相邻交易日份额差，优先乘以同日 `fund_nav.unit_nav`；同日净值缺失时回退 `fund_daily.close`。
+- ETF 净申购金额：ETF 数据日要求目标权益 ETF 价格和份额 100% 同日完整；最新交易日不完整时自动回退到最近完整交易日。
+- ETF 每日净申购：使用 `fund_share.fd_share` 相邻交易日份额差，优先乘以同日 `fund_nav.unit_nav`；同日净值缺失时回退同日 `fund_daily.close`。
+- ETF 净申购占比：使用窗口净申购金额除以窗口期初 ETF 规模，衡量资金流入强度。
 - 当日 ETF 规模：使用最新份额乘以最新收盘价估算。
 - 当日涨跌幅：按最新收盘价相对窗口上一交易日收盘价计算，并按规模加权聚合。
 - 宽基被动 ETF：要求跟踪基准明确匹配宽基指数，且宽基匹配时要求 `invest_type = 被动指数型`。
-- 行业和策略因子：优先按 `fund_basic.benchmark` 跟踪指数归类，不靠基金简称做主观分类。
+- 行业和策略因子：优先按 `fund_basic.benchmark` 跟踪指数归类，不靠基金简称做主观分类；分类会标记精确映射或关键词兜底，后台可用审计脚本检查覆盖率和低置信度样本。
+- A 股行业体系：前台优先沿用中证/国证/上证/深证等跟踪指数名称，后台可用申万 2021 一级行业成分暴露审计主题 ETF，先发现偏差再谨慎调整主数据。
 
 详细口径见 [docs/data_sources.md](docs/data_sources.md)。
 
