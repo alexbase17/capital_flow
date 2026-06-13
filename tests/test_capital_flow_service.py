@@ -1048,7 +1048,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(status["missing_share_count"], 0)
         self.assertIn("100% 对齐", status["fallback_reason"])
 
-    def test_active_target_etf_codes_uses_latest_interface_universe(self):
+    def test_active_target_etf_codes_uses_latest_price_share_union(self):
         funds = {
             "510300.SH": {"name": "沪深300ETF华泰柏瑞", "benchmark": "沪深300指数收益率"},
             "510500.SH": {"name": "中证500ETF南方", "benchmark": "中证500指数收益率"},
@@ -1060,10 +1060,13 @@ class CapitalFlowServiceTests(unittest.TestCase):
             active_target_etf_codes(
                 funds,
                 {"20260612": {"510300.SH": 4.1, "159001.SZ": 1.0, "588000.SH": 1.2}},
-                {"20260612": {"510500.SH": 5.2, "159001.SZ": 1.0}},
-                ["20260612"],
+                {
+                    "20260612": {"510500.SH": 5.2, "159001.SZ": 1.0},
+                    "20260611": {"510300.SH": 4.0, "159001.SZ": 1.0},
+                },
+                ["20260612", "20260611"],
             ),
-            {"510500.SH"},
+            {"510300.SH", "510500.SH"},
         )
 
     def test_aligned_fund_dates_rejects_insufficient_complete_window(self):

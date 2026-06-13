@@ -40,6 +40,7 @@ FLOW_WINDOWS: tuple[tuple[str, str, int], ...] = (
 )
 DEFAULT_FLOW_WINDOW = "1d"
 FUND_DATE_LOOKBACK_BUFFER = 10
+RECENT_SHARE_REQUIRED_LOOKBACK = 3
 
 
 _CACHE: dict[str, Any] = {"payloads": {}}
@@ -244,7 +245,24 @@ def active_target_etf_codes(
     if not candidate_dates:
         return set()
     latest_date = candidate_dates[0]
-    active_codes = set(daily_shares.get(latest_date, {}))
+    latest_price_codes = {
+        code
+        for code, value in daily_prices.get(latest_date, {}).items()
+        if to_positive_float(value) > 0
+    }
+    latest_share_codes = {
+        code
+        for code, value in daily_shares.get(latest_date, {}).items()
+        if to_positive_float(value) > 0
+    }
+    recent_share_dates = candidate_dates[: RECENT_SHARE_REQUIRED_LOOKBACK + 1]
+    recent_share_universe = {
+        code
+        for trade_date in recent_share_dates
+        for code, value in daily_shares.get(trade_date, {}).items()
+        if to_positive_float(value) > 0
+    }
+    active_codes = latest_share_codes | (latest_price_codes & recent_share_universe)
     return target_etf_codes(funds) & active_codes
 
 

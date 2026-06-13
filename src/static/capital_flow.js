@@ -1,4 +1,9 @@
-const moneyFmt = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pctFmt = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const yiFmtByDigits = {
+  0: new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
+  1: new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+  2: new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+};
 const sectionIds = ["total", "broad", "a_industry", "hk_industry", "strategy"];
 const windowKeys = ["1d", "5d", "20d", "60d"];
 const windowLabels = { "1d": "1日", "5d": "5日", "20d": "20日", "60d": "60日" };
@@ -14,13 +19,21 @@ function flowClass(value) {
   return "neutral";
 }
 
+function yiFractionDigits(value) {
+  const absValue = Math.abs(Number(value || 0));
+  if (absValue >= 100) return 0;
+  if (absValue >= 10) return 1;
+  return 2;
+}
+
 function fmtYi(value) {
-  return `${moneyFmt.format(Number(value || 0))} 亿`;
+  const digits = yiFractionDigits(value);
+  return `${yiFmtByDigits[digits].format(Number(value || 0))} 亿`;
 }
 
 function fmtPct(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "--";
-  return `${moneyFmt.format(Number(value))}%`;
+  return `${pctFmt.format(Number(value))}%`;
 }
 
 function formatIndexName(row) {
