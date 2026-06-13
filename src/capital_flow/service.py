@@ -80,7 +80,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
         raise TushareUnavailable("TUSHARE_TOKEN is not set")
     key, label, window_days = selected_window
     max_window_days = max(config[2] for config in FLOW_WINDOWS)
-    required_fund_dates = max_window_days + 1
+    required_fund_dates = max_window_days + 2
     candidate_fund_dates = recent_fund_daily_dates(client, required_fund_dates + FUND_DATE_LOOKBACK_BUFFER)
     hsgt_rows = recent_hsgt_rows(client, max_window_days)
     funds = fund_basic_map(client)
@@ -110,7 +110,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
     window_payloads = {}
     for window_config in FLOW_WINDOWS:
         window_key, window_label, configured_days = window_config
-        window_dates = fund_dates[: configured_days + 1]
+        window_dates = fund_dates[: configured_days + 2]
         window_payloads[window_key] = {
             "label": window_label,
             "days": configured_days,

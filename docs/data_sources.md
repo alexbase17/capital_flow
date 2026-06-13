@@ -122,6 +122,18 @@ moneyflow_hsgt
 
 近期交易日 `fund_nav` 使用 30 分钟短缓存。若盘后先取到价格和份额、但净值尚未发布，页面会临时显示“收盘价估算”；净值发布并且缓存过期后会自动回填为“净值口径”或“混合口径”，不需要修改历史业务数据。
 
+份额分拆/折算处理：
+
+ETF 发生份额分拆或折算时，份额数量会按倍数突变，但这不是一级市场申购。计算层会识别“当日份额相对上一交易日接近 `2 / 3 / 4 / 5 / 10` 倍，且下一交易日价格按同倍数反向调整”的日度点。只有份额和价格两个信号同时成立，才按分拆处理，避免误伤真实大额申购。
+
+```text
+可比上日份额 = 上日 fd_share * 分拆倍数
+可比当日价格 = 当日价格 / 分拆倍数
+分拆日净申购金额 = (当日 fd_share - 可比上日份额) * 可比当日价格 / 10000
+```
+
+同一调整也用于分天涨跌幅的规模权重、5 日成交均值占比的日度期初规模和后台规模归因审计。API 中 `quality.split_adjusted_count` 和分组行 `split_adjusted_count` 会记录触发调整的日度点数量，便于排查异常尖峰。
+
 单位说明：
 
 - `fd_share` 按 TuShare ETF 份额字段处理。
@@ -133,6 +145,7 @@ moneyflow_hsgt
 - `nav_count`：使用净值口径的日度点数量。
 - `close_estimate_count`：使用收盘价估算的日度点数量。
 - `skipped_flow_count`：缺少价格或份额导致跳过的日度点数量。
+- `split_adjusted_count`：识别并调整份额分拆/折算的日度点数量。
 - `price_source_label`：综合展示净值口径、收盘价估算或混合口径。
 - `flow_price_status`：`final` 表示全部使用净值，`estimated` 表示全部使用收盘价估算，`mixed` 表示同一窗口中净值和估算混用。
 - `nav_estimate_ratio_pct`：收盘价估算点数量占比，用于后台判断当前结果距离最终净值口径的程度。
@@ -180,7 +193,7 @@ moneyflow_hsgt
 归因残差 = 日规模变化 - 净申购贡献 - 市场涨跌影响
 ```
 
-当净申购价格使用同日收盘价时，残差理论上接近 0；当使用单位净值时，残差会包含单位净值和收盘价的差异。API 中 `quality.scale_audit` 和每个分组行的 `scale_audit` 会输出 `scale_delta_yi`、`net_flow_yi`、`market_effect_yi`、`residual_yi`、`residual_ratio_pct` 和 `status`。审计只统计价格、份额和上一交易日价格均可用的日度点；该能力先用于后台排障，不进入主表展示。
+当净申购价格使用同日收盘价时，残差理论上接近 0；当使用单位净值时，残差会包含单位净值和收盘价的差异。若日度点触发份额分拆/折算调整，审计也使用可比份额和可比价格，避免把分拆造成的份额变化误判为净申购。API 中 `quality.scale_audit` 和每个分组行的 `scale_audit` 会输出 `scale_delta_yi`、`net_flow_yi`、`market_effect_yi`、`residual_yi`、`residual_ratio_pct` 和 `status`。审计只统计价格、份额和上一交易日价格均可用的日度点；该能力先用于后台排障，不进入主表展示。
 
 ## 当日 ETF 规模
 

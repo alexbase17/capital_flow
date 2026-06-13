@@ -102,6 +102,7 @@ ETF 分组行除表格指标外还包含展开图序列：
 - `daily_turnover`：窗口内每日成交额和对应日度期初规模，用于“5日滑动窗口成交均值占比”走势图。
 - `daily_net_flow`：窗口内每日净申购金额，用于“分天净申购金额”和“5日滑动窗口净申购金额”走势图。
 - `scale_audit`：后台规模归因审计，校验规模变化、净申购贡献和市场涨跌影响的残差；不进入前台主表。
+- `split_adjusted_count`：该分组中识别并按可比口径调整的 ETF 份额分拆/折算日度点数量。
 
 ETF 数据状态字段：
 
@@ -113,6 +114,7 @@ ETF 数据状态字段：
 - `nav_date`：同日单位净值可用日期，缺失时按同日收盘价估算。
 - `quality.price_source_label` / `quality.flow_price_status`：标记净申购估值为净值口径、收盘价估算或混合口径。
 - `quality.scale_audit`：全页 ETF 分组的规模归因审计汇总。
+- `quality.split_adjusted_count`：全页 ETF 分组触发份额分拆/折算调整的日度点数量，用于后台排查异常净申购尖峰。
 - `is_aligned`：ETF 价格日和份额日是否对齐；当前服务只输出对齐后的 ETF 结论。
 - `required_etf_count`：本次严格完整性检查覆盖的目标权益 ETF 数量。
 - `missing_price_count` / `missing_share_count`：最新候选交易日中缺少价格或份额的目标权益 ETF 数量。

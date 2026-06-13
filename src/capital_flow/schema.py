@@ -42,6 +42,7 @@ REQUIRED_ROW_KEYS = {
     "nav_count",
     "close_estimate_count",
     "skipped_flow_count",
+    "split_adjusted_count",
     "price_source_label",
     "daily_net_flow",
     "daily_change_pct",

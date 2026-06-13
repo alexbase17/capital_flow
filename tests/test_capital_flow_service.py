@@ -737,6 +737,41 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(payload["quality"]["nav_estimate_ratio_pct"], 100.0)
         self.assertEqual(payload["quality"]["scale_audit"]["status"], "ok")
 
+    def test_etf_flow_adjusts_share_split_before_price_adjusts(self):
+        funds = {
+            "515050.SH": {
+                "name": "通信ETF华夏",
+                "benchmark": "中证5G通信主题指数收益率",
+                "invest_type": "被动指数型",
+            },
+        }
+        payload = _etf_flows_for_window(
+            funds,
+            ["20260611", "20260610", "20260609"],
+            2,
+            daily_prices={
+                "20260611": {"515050.SH": 1.04},
+                "20260610": {"515050.SH": 3.06},
+                "20260609": {"515050.SH": 3.0},
+            },
+            daily_navs={"20260611": {}, "20260610": {}},
+            daily_shares={
+                "20260611": {"515050.SH": 304000},
+                "20260610": {"515050.SH": 303000},
+                "20260609": {"515050.SH": 100000},
+            },
+        )
+
+        row = payload["sections"]["a_industry"]["rows"][0]
+        self.assertEqual(row["daily_net_flow"], [{"date": "2026-06-10", "value": 0.31}, {"date": "2026-06-11", "value": 0.1}])
+        self.assertEqual(row["daily_change_pct"], [{"date": "2026-06-10", "value": 2.0}, {"date": "2026-06-11", "value": 1.96}])
+        self.assertEqual(row["net_flow_yi"], 0.41)
+        self.assertEqual(row["split_adjusted_count"], 1)
+        self.assertEqual(payload["quality"]["split_adjusted_count"], 1)
+        self.assertEqual(row["debug_etfs"][0]["flow_price"], 1.02)
+        self.assertEqual(row["debug_etfs"][0]["split_adjusted_count"], 1)
+        self.assertEqual(row["scale_audit"]["status"], "ok")
+
     def test_turnover_ratio_averages_daily_turnover_intensity(self):
         funds = {
             "510300.SH": {
