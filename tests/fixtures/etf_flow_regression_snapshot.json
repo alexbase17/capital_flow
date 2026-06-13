@@ -1,0 +1,92 @@
+{
+  "a_industry_rows": [
+    {
+      "change_pct": 1.96,
+      "daily_change_pct": [
+        {"date": "2026-06-10", "value": 2.0},
+        {"date": "2026-06-11", "value": 1.96}
+      ],
+      "daily_net_flow": [
+        {"date": "2026-06-10", "value": 0.31},
+        {"date": "2026-06-11", "value": 0.1}
+      ],
+      "daily_turnover": [
+        {"date": "2026-06-10", "start_scale_yi": 30.0, "value": 0.6},
+        {"date": "2026-06-11", "start_scale_yi": 30.91, "value": 0.8}
+      ],
+      "index_code": "",
+      "index_name": "通信",
+      "net_flow_ratio": 1.37,
+      "net_flow_yi": 0.41,
+      "scale_audit": {
+        "market_effect_yi": 1.21,
+        "net_flow_yi": 0.41,
+        "point_count": 2,
+        "residual_ratio_pct": -0.0,
+        "residual_yi": -0.0,
+        "scale_delta_yi": 1.62,
+        "status": "ok"
+      },
+      "scale_yi": 31.62,
+      "split_adjusted_count": 1,
+      "start_scale_yi": 30.0,
+      "turnover_ratio": 2.29,
+      "turnover_yi": 1.4
+    }
+  ],
+  "broad_rows": [
+    {
+      "change_pct": 2.56,
+      "daily_change_pct": [
+        {"date": "2026-06-10", "value": 2.63},
+        {"date": "2026-06-11", "value": 2.56}
+      ],
+      "daily_net_flow": [
+        {"date": "2026-06-10", "value": 3.9},
+        {"date": "2026-06-11", "value": 8.0}
+      ],
+      "daily_turnover": [
+        {"date": "2026-06-10", "start_scale_yi": 34.2, "value": 1.0},
+        {"date": "2026-06-11", "start_scale_yi": 39.0, "value": 2.0}
+      ],
+      "index_code": "000300.SH",
+      "index_name": "沪深300",
+      "net_flow_ratio": 34.8,
+      "net_flow_yi": 11.9,
+      "scale_audit": {
+        "market_effect_yi": 1.9,
+        "net_flow_yi": 11.9,
+        "point_count": 2,
+        "residual_ratio_pct": -0.0,
+        "residual_yi": -0.0,
+        "scale_delta_yi": 13.8,
+        "status": "ok"
+      },
+      "scale_yi": 48.0,
+      "split_adjusted_count": 0,
+      "start_scale_yi": 34.2,
+      "turnover_ratio": 4.03,
+      "turnover_yi": 3.0
+    }
+  ],
+  "latest_date": "2026-06-11",
+  "previous_date": "2026-06-09",
+  "quality": {
+    "close_estimate_count": 4,
+    "flow_price_status": "estimated",
+    "nav_count": 0,
+    "nav_estimate_ratio_pct": 100.0,
+    "price_source_label": "收盘价估算",
+    "scale_audit": {
+      "market_effect_yi": 3.11,
+      "net_flow_yi": 12.31,
+      "point_count": 4,
+      "residual_ratio_pct": -0.0,
+      "residual_yi": -0.0,
+      "scale_delta_yi": 15.42,
+      "status": "ok"
+    },
+    "skipped_flow_count": 0,
+    "split_adjusted_count": 1
+  }
+}

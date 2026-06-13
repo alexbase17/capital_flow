@@ -8,20 +8,21 @@ from typing import Any
 from src.tushare_client import TushareClient, TushareUnavailable
 from src.capital_flow.ai_summary import capital_flow_ai_summary
 from src.capital_flow.calculator import (
-    EtfFlowGroup,
-    MIN_INDEX_SCALE_YI,
-    change_pct_from_close,
     etf_flows_for_window,
-    flow_price_for_etf,
-    hsgt_item,
     north_south_flow_from_rows,
-    section_payload,
+)
+from src.capital_flow.policy import (
+    DEFAULT_FLOW_WINDOW,
+    ETF_CACHE_SECONDS,
+    FLOW_WINDOWS,
+    FUND_DATE_LOOKBACK_BUFFER,
+    MIN_INDEX_SCALE_YI,
+    RECENT_SHARE_REQUIRED_LOOKBACK,
 )
 from src.capital_flow.fetcher import (
     fund_adj_history_map,
     fund_adj_map,
     fund_basic_map,
-    fund_daily_map,
     fund_daily_snapshot_map,
     fund_nav_history_map,
     fund_nav_map,
@@ -33,37 +34,7 @@ from src.capital_flow.schema import validate_capital_flow_payload
 from src.capital_flow.taxonomy import is_target_equity_etf
 
 
-ETF_CACHE_SECONDS = 30 * 60
-FLOW_WINDOWS: tuple[tuple[str, str, int], ...] = (
-    ("1d", "1日", 1),
-    ("5d", "5日", 5),
-    ("20d", "20日", 20),
-    ("60d", "60日", 60),
-)
-DEFAULT_FLOW_WINDOW = "1d"
-FUND_DATE_LOOKBACK_BUFFER = 10
-RECENT_SHARE_REQUIRED_LOOKBACK = 3
-
-
 _CACHE: dict[str, Any] = {"payloads": {}}
-
-# Compatibility aliases for focused tests and any local diagnostics.
-_change_pct = change_pct_from_close
-_etf_flows_for_window = etf_flows_for_window
-_flow_price_for_etf = flow_price_for_etf
-_fund_adj_history_map = fund_adj_history_map
-_fund_adj_map = fund_adj_map
-_fund_basic_map = fund_basic_map
-_fund_daily_map = fund_daily_map
-_fund_daily_snapshot_map = fund_daily_snapshot_map
-_fund_nav_history_map = fund_nav_history_map
-_fund_nav_map = fund_nav_map
-_fund_share_map = fund_share_map
-_hsgt_item = hsgt_item
-_north_south_flow_from_rows = north_south_flow_from_rows
-_recent_fund_daily_dates = recent_fund_daily_dates
-_recent_hsgt_rows = recent_hsgt_rows
-_section_payload = section_payload
 
 
 def capital_flow_payload(
@@ -235,9 +206,6 @@ def aligned_fund_dates(
         "missing_price_count": missing_price_count,
         "missing_share_count": missing_share_count,
     }
-
-
-_aligned_fund_dates = aligned_fund_dates
 
 
 def target_etf_codes(funds: dict[str, dict[str, Any]]) -> set[str]:
@@ -415,21 +383,3 @@ def fmt_date(value: Any) -> str:
     if len(text) == 8 and text.isdigit():
         return f"{text[:4]}-{text[4:6]}-{text[6:]}"
     return text
-
-
-def _latest_two_fund_daily_dates(client: TushareClient) -> tuple[str, str]:
-    dates = recent_fund_daily_dates(client, 2)
-    return dates[0], dates[1]
-
-
-def _etf_flows(client: TushareClient) -> dict[str, Any]:
-    funds = fund_basic_map(client)
-    dates = recent_fund_daily_dates(client, 2)
-    return etf_flows_for_window(
-        funds,
-        dates,
-        1,
-        daily_prices={trade_date: fund_daily_map(client, trade_date) for trade_date in dates},
-        daily_navs={dates[0]: fund_nav_map(client, dates[0])},
-        daily_shares={trade_date: fund_share_map(client, trade_date) for trade_date in dates},
-    )

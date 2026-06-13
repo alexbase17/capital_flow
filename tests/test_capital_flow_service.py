@@ -1,22 +1,28 @@
+import json
 import unittest
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from src.capital_flow import fetcher
-from src.capital_flow.service import (
+from src.capital_flow.calculator import (
     EtfFlowGroup,
-    _aligned_fund_dates,
+    change_pct_from_close,
+    etf_flows_for_window,
+    flow_price_for_etf,
+    hsgt_item,
+    section_payload,
+)
+from src.capital_flow.fetcher import (
+    fund_adj_history_map,
+    fund_adj_map,
+    fund_nav_history_map,
+)
+from src.capital_flow.service import (
+    aligned_fund_dates,
     active_target_etf_codes,
-    _change_pct,
-    _etf_flows_for_window,
     fill_missing_adj_factors,
     fill_missing_navs,
-    _fund_adj_history_map,
-    _fund_adj_map,
-    _flow_price_for_etf,
-    _fund_nav_history_map,
-    _hsgt_item,
-    _section_payload,
 )
 from src.capital_flow.schema import validate_capital_flow_payload
 from src.capital_flow.taxonomy import (
@@ -37,6 +43,45 @@ from src.capital_flow.taxonomy_exposure import (
     resolve_index_code,
     sw2021_exposure_from_weight_rows,
 )
+
+
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
+
+
+def read_fixture(filename: str):
+    return json.loads((FIXTURE_DIR / filename).read_text(encoding="utf-8"))
+
+
+def core_accounting_snapshot(payload):
+    def row_snapshot(row):
+        return {
+            key: row[key]
+            for key in (
+                "change_pct",
+                "daily_change_pct",
+                "daily_net_flow",
+                "daily_turnover",
+                "index_code",
+                "index_name",
+                "net_flow_ratio",
+                "net_flow_yi",
+                "scale_audit",
+                "scale_yi",
+                "split_adjusted_count",
+                "start_scale_yi",
+                "turnover_ratio",
+                "turnover_yi",
+            )
+            if key in row
+        }
+
+    return {
+        "latest_date": payload["latest_date"],
+        "previous_date": payload["previous_date"],
+        "quality": payload["quality"],
+        "broad_rows": [row_snapshot(row) for row in payload["sections"]["broad"]["rows"]],
+        "a_industry_rows": [row_snapshot(row) for row in payload["sections"]["a_industry"]["rows"]],
+    }
 
 
 class CapitalFlowServiceTests(unittest.TestCase):
@@ -93,7 +138,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 return [{"ts_code": "510300.SH", "adj_factor": "1.267"}]
 
         with TemporaryDirectory() as tmpdir, patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)):
-            self.assertEqual(_fund_adj_map(FakeClient(), "20250102"), {"510300.SH": 1.267})
+            self.assertEqual(fund_adj_map(FakeClient(), "20250102"), {"510300.SH": 1.267})
 
     def test_fund_adj_history_map_reads_adjustment_factor_by_code(self):
         test_case = self
@@ -110,7 +155,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
 
         with TemporaryDirectory() as tmpdir, patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)):
             self.assertEqual(
-                _fund_adj_history_map(FakeClient(), "589270.SH", start_date="20250101", end_date="20250102"),
+                fund_adj_history_map(FakeClient(), "589270.SH", start_date="20250101", end_date="20250102"),
                 {"20250102": 1.0},
             )
 
@@ -129,7 +174,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
 
         with TemporaryDirectory() as tmpdir, patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)):
             self.assertEqual(
-                _fund_nav_history_map(FakeClient(), "510300.SH", start_date="20250101", end_date="20250102"),
+                fund_nav_history_map(FakeClient(), "510300.SH", start_date="20250101", end_date="20250102"),
                 {"20250102": 4.2},
             )
 
@@ -271,7 +316,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "invest_type": "被动指数型",
             },
         }
-        payload = _etf_flows_for_window(
+        payload = etf_flows_for_window(
             funds,
             ["20260611", "20260610"],
             1,
@@ -710,23 +755,23 @@ class CapitalFlowServiceTests(unittest.TestCase):
         )
 
     def test_flow_price_prefers_same_day_nav(self):
-        self.assertEqual(_flow_price_for_etf("510300.SH", 4.9, {"510300.SH": 4.8123}), (4.8123, "nav", "净值口径"))
+        self.assertEqual(flow_price_for_etf("510300.SH", 4.9, {"510300.SH": 4.8123}), (4.8123, "nav", "净值口径"))
 
     def test_flow_price_falls_back_to_close_when_nav_missing(self):
-        self.assertEqual(_flow_price_for_etf("510300.SH", 4.9, {}), (4.9, "close", "收盘价估算"))
+        self.assertEqual(flow_price_for_etf("510300.SH", 4.9, {}), (4.9, "close", "收盘价估算"))
 
-    def test_change_pct_uses_previous_close(self):
-        self.assertEqual(round(_change_pct(10.5, 10.0) or 0, 2), 5.0)
-        self.assertIsNone(_change_pct(10.5, None))
+    def test_change_pct_from_close_uses_previous_close(self):
+        self.assertEqual(round(change_pct_from_close(10.5, 10.0) or 0, 2), 5.0)
+        self.assertIsNone(change_pct_from_close(10.5, None))
 
     def test_hsgt_item_uses_daily_net_amount_in_wan_yuan(self):
-        item = _hsgt_item("北上资金", [{"north_money": "339321.25"}], "north_money")
+        item = hsgt_item("北上资金", [{"north_money": "339321.25"}], "north_money")
 
         self.assertEqual(item["latest_value_yi"], 33.93)
         self.assertEqual(item["net_change_yi"], 33.93)
 
     def test_hsgt_item_sums_window_rows(self):
-        item = _hsgt_item("北上资金", [{"north_money": "10000"}, {"north_money": "-5000"}], "north_money")
+        item = hsgt_item("北上资金", [{"north_money": "10000"}, {"north_money": "-5000"}], "north_money")
 
         self.assertEqual(item["latest_value_yi"], 0.5)
         self.assertEqual(item["net_change_yi"], 0.5)
@@ -748,8 +793,8 @@ class CapitalFlowServiceTests(unittest.TestCase):
             ("a_industry", "电力"): EtfFlowGroup(section="a_industry", index_name="电力", scale_yi=30, net_flow_yi=1.5),
         }
 
-        broad_rows = _section_payload(groups, "broad", "宽基ETF净申购金额", min_scale_yi=10)["rows"]
-        industry_rows = _section_payload(groups, "a_industry", "A股行业净申购金额", min_scale_yi=10)["rows"]
+        broad_rows = section_payload(groups, "broad", "宽基ETF净申购金额", min_scale_yi=10)["rows"]
+        industry_rows = section_payload(groups, "a_industry", "A股行业净申购金额", min_scale_yi=10)["rows"]
 
         self.assertEqual([row["index_name"] for row in broad_rows], ["沪深300"])
         self.assertEqual(broad_rows[0]["index_code"], "000300.SH")
@@ -766,7 +811,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
             {"code": "510310.SH", "scale_yi": 50, "net_flow_yi": 2, "share_change_wan": 150},
         ]
 
-        row = _section_payload({("broad", "沪深300"): group}, "broad", "宽基ETF净申购金额", min_scale_yi=None)[
+        row = section_payload({("broad", "沪深300"): group}, "broad", "宽基ETF净申购金额", min_scale_yi=None)[
             "rows"
         ][0]
 
@@ -792,7 +837,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "invest_type": "被动指数型",
             },
         }
-        payload = _etf_flows_for_window(
+        payload = etf_flows_for_window(
             funds,
             ["20260611", "20260610"],
             1,
@@ -826,7 +871,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "invest_type": "被动指数型",
             },
         }
-        payload = _etf_flows_for_window(
+        payload = etf_flows_for_window(
             funds,
             ["20260611", "20260610"],
             1,
@@ -854,7 +899,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "invest_type": "被动指数型",
             },
         }
-        payload = _etf_flows_for_window(
+        payload = etf_flows_for_window(
             funds,
             ["20260611", "20260610", "20260609"],
             2,
@@ -905,6 +950,42 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(payload["quality"]["nav_estimate_ratio_pct"], 100.0)
         self.assertEqual(payload["quality"]["scale_audit"]["status"], "ok")
 
+    def test_etf_flow_regression_snapshot_for_core_accounting(self):
+        funds = {
+            "510300.SH": {
+                "name": "沪深300ETF华泰柏瑞",
+                "benchmark": "沪深300指数收益率",
+                "invest_type": "被动指数型",
+            },
+            "515050.SH": {
+                "name": "通信ETF华夏",
+                "benchmark": "中证5G通信主题指数收益率",
+                "invest_type": "被动指数型",
+            },
+        }
+        payload = etf_flows_for_window(
+            funds,
+            ["20260611", "20260610", "20260609"],
+            2,
+            daily_prices={
+                "20260611": {"510300.SH": 4.0, "515050.SH": 1.04},
+                "20260610": {"510300.SH": 3.9, "515050.SH": 3.06},
+                "20260609": {"510300.SH": 3.8, "515050.SH": 3.0},
+            },
+            daily_navs={"20260611": {}, "20260610": {}},
+            daily_shares={
+                "20260611": {"510300.SH": 120000, "515050.SH": 304000},
+                "20260610": {"510300.SH": 100000, "515050.SH": 303000},
+                "20260609": {"510300.SH": 90000, "515050.SH": 100000},
+            },
+            daily_amounts={
+                "20260611": {"510300.SH": 2.0, "515050.SH": 0.8},
+                "20260610": {"510300.SH": 1.0, "515050.SH": 0.6},
+            },
+        )
+
+        self.assertEqual(core_accounting_snapshot(payload), read_fixture("etf_flow_regression_snapshot.json"))
+
     def test_etf_flow_adjusts_share_split_before_price_adjusts(self):
         funds = {
             "515050.SH": {
@@ -913,7 +994,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "invest_type": "被动指数型",
             },
         }
-        payload = _etf_flows_for_window(
+        payload = etf_flows_for_window(
             funds,
             ["20260611", "20260610", "20260609"],
             2,
@@ -948,7 +1029,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "invest_type": "被动指数型",
             },
         }
-        payload = _etf_flows_for_window(
+        payload = etf_flows_for_window(
             funds,
             ["20260611", "20260610", "20260609"],
             2,
@@ -981,7 +1062,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "invest_type": "被动指数型",
             },
         }
-        payload = _etf_flows_for_window(
+        payload = etf_flows_for_window(
             funds,
             ["20260611", "20260610"],
             1,
@@ -1013,7 +1094,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "invest_type": "被动指数型",
             },
         }
-        payload = _etf_flows_for_window(
+        payload = etf_flows_for_window(
             funds,
             ["20260611", "20260610"],
             1,
@@ -1047,7 +1128,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "invest_type": "被动指数型",
             },
         }
-        payload = _etf_flows_for_window(
+        payload = etf_flows_for_window(
             funds,
             ["20260611", "20260610", "20260609"],
             2,
@@ -1081,7 +1162,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "invest_type": "被动指数型",
             },
         }
-        payload = _etf_flows_for_window(
+        payload = etf_flows_for_window(
             funds,
             ["20260611", "20260610"],
             1,
@@ -1103,7 +1184,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(row["net_flow_ratio"], 200.0)
 
     def test_aligned_fund_dates_uses_latest_complete_price_share_date(self):
-        dates, status = _aligned_fund_dates(
+        dates, status = aligned_fund_dates(
             ["20260612", "20260611", "20260610"],
             {
                 "20260612": {"510300.SH": 4.1},
@@ -1127,7 +1208,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertTrue(status["is_aligned"])
 
     def test_aligned_fund_dates_requires_all_target_etfs_on_as_of_date(self):
-        dates, status = _aligned_fund_dates(
+        dates, status = aligned_fund_dates(
             ["20260612", "20260611", "20260610"],
             {
                 "20260612": {"510300.SH": 4.1},
@@ -1174,7 +1255,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
 
     def test_aligned_fund_dates_rejects_insufficient_complete_window(self):
         with self.assertRaisesRegex(RuntimeError, "price/share data are not aligned"):
-            _aligned_fund_dates(
+            aligned_fund_dates(
                 ["20260612", "20260611"],
                 {"20260612": {"510300.SH": 4.1}, "20260611": {"510300.SH": 4.0}},
                 {"20260612": {}, "20260611": {"510300.SH": 10000}},

@@ -64,6 +64,8 @@ src/capital_flow/routes.py          页面和 API 路由
 src/capital_flow/service.py         缓存、窗口选择、API payload 编排
 src/capital_flow/ai_summary.py      AI 总结输入压缩、DeepSeek 调用和规则兜底
 src/capital_flow/fetcher.py         TuShare 数据拉取
+src/capital_flow/policy.py          窗口、阈值、缓存和拆分识别等口径参数
+src/capital_flow/types.py           计算层共享数据结构
 src/capital_flow/calculator.py      北上/南下和 ETF 净申购计算
 src/capital_flow/taxonomy_data.json ETF 精确指数分类主数据
 src/capital_flow/taxonomy.py        ETF 分类归一化、优先级和关键词兜底
@@ -73,7 +75,7 @@ src/capital_flow/schema.py          API 返回结构校验
 src/static/capital_flow.js          前端交互、表格、展开曲线
 src/static/capital_flow.css         页面样式
 src/templates/capital_flow.html     页面模板
-tests/                              单元测试和前端契约测试
+tests/                              单元测试、fixture 回归和前端契约测试
 docs/                               架构、运维、数据源、变更记录
 ```
 

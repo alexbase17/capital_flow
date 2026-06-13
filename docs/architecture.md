@@ -45,7 +45,9 @@
 | `src/capital_flow/service.py` | 缓存、窗口选择、TuShare 拉取编排、payload 校验 |
 | `src/capital_flow/ai_summary.py` | AI 总结结构化输入、DeepSeek 调用和本地规则兜底 |
 | `src/capital_flow/fetcher.py` | 按接口封装 TuShare 数据读取 |
-| `src/capital_flow/calculator.py` | 北上/南下资金、ETF 净申购、规模、涨跌幅、成交均值占比计算 |
+| `src/capital_flow/policy.py` | 统一维护窗口、规模阈值、缓存 TTL、份额拆分识别容差等口径参数 |
+| `src/capital_flow/types.py` | 计算层共享的 TypedDict/dataclass 数据结构 |
+| `src/capital_flow/calculator.py` | 北上/南下资金、ETF 净申购、规模、涨跌幅、成交均值占比计算；ETF 主循环拆分为静态信息、最新日指标、日度指标、聚合累加和 payload 组装 |
 | `src/capital_flow/taxonomy_data.json` | ETF 精确指数分类主数据，记录 market、asset_class、taxonomy_type、parent_bucket 等后台字段 |
 | `src/capital_flow/taxonomy.py` | ETF 分类归一化、优先级、主数据读取和关键词兜底 |
 | `src/capital_flow/taxonomy_audit.py` | ETF 分类覆盖率、分类来源、置信度和未分类样本审计 |
@@ -66,7 +68,7 @@
 
 本项目有两层缓存：
 
-1. API payload 进程内缓存：`src/capital_flow/service.py` 中 `ETF_CACHE_SECONDS = 30 * 60`。
+1. API payload 进程内缓存：`src/capital_flow/policy.py` 中 `ETF_CACHE_SECONDS = 30 * 60`。
 2. TuShare 原始响应文件缓存：`src/capital_flow/fetcher.py` 写入 `data/tushare_cache/`。
 
 API payload 缓存：

@@ -363,7 +363,8 @@ MIN_INDEX_SCALE_YI = 20.0
 ## 修改口径时的检查清单
 
 - 修改 `taxonomy_data.json` 或 `taxonomy.py` 后，补充或更新分类测试，并运行 `.venv/bin/python scripts/audit_etf_taxonomy.py` 对比覆盖率、关键词兜底样本和未分类样本。
-- 修改计算公式后，补充或更新 `tests/test_capital_flow_service.py`。
+- 修改计算公式后，补充或更新 `tests/test_capital_flow_service.py`；涉及净申购、成交均值占比、涨跌幅、份额拆分、规模审计等核心会计输出时，同步更新或新增 `tests/fixtures/` 下的固定样本快照。
+- 修改窗口、展示阈值、缓存 TTL 或份额拆分识别容差时，优先维护 `src/capital_flow/policy.py`，并同步更新页面提示和文档。
 - 修改 API 字段后，更新 `schema.py`、前端渲染和 `tests/test_capital_flow_ui_contract.py`。
 - 修改展示阈值或窗口后，同步更新页面提示、README 和本文档。
 - 提交前运行 `scripts/verify_all.sh`。

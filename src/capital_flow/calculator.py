@@ -5,19 +5,22 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.capital_flow.policy import (
+    HSGT_UNIT_TO_YI,
+    MIN_INDEX_SCALE_YI,
+    SPLIT_FACTORS,
+    SPLIT_PRICE_TOLERANCE,
+    SPLIT_SHARE_TOLERANCE,
+)
 from src.tushare_client import TushareUnavailable
 from src.capital_flow.taxonomy import (
     classify_etf_group,
     index_code_for_group,
     is_target_equity_etf,
 )
+from src.capital_flow.types import EtfDailyMetrics, EtfLatestMetrics, EtfStaticInfo, EtfTopItem
 
 
-MIN_INDEX_SCALE_YI = 20.0
-HSGT_UNIT_TO_YI = 0.0001
-SPLIT_FACTORS = (2, 3, 4, 5, 10)
-SPLIT_SHARE_TOLERANCE = 0.12
-SPLIT_PRICE_TOLERANCE = 0.18
 DISPLAY_INDEX_NAMES = {
     "非银金融": "证券保险/非银金融",
     "电力": "公用事业/电力",
@@ -77,6 +80,276 @@ def hsgt_item(name: str, rows: list[dict[str, Any]], field_name: str) -> dict[st
     }
 
 
+def etf_static_info(code: str, fund: dict[str, Any]) -> EtfStaticInfo:
+    return EtfStaticInfo(
+        code=code,
+        name=str(fund.get("name") or ""),
+        benchmark=str(fund.get("benchmark") or ""),
+        invest_type=str(fund.get("invest_type") or ""),
+    )
+
+
+def classified_group(info: EtfStaticInfo) -> tuple[str, str] | None:
+    return classify_etf_group(info.name, benchmark=info.benchmark, invest_type=info.invest_type)
+
+
+def latest_etf_metrics(
+    *,
+    code: str,
+    close: float,
+    previous_close: float | None,
+    latest_share: float,
+    latest_previous_share: float | None,
+    start_price: float | None,
+    start_share: float | None,
+    latest_navs: dict[str, float],
+    start_navs: dict[str, float],
+    latest_adj_factor: float | None,
+    latest_previous_adj_factor: float | None,
+    previous_close_for_change: float | None,
+) -> EtfLatestMetrics:
+    latest_scale_price = scale_price_for_etf(code, close, latest_navs)
+    start_scale_price = scale_price_for_etf(code, start_price, start_navs)
+    scale_yi = latest_share * latest_scale_price / 10000
+    start_scale_yi = start_share * start_scale_price / 10000 if start_share is not None and start_scale_price else 0.0
+    audit_start_scale_yi = (
+        start_share * start_price / 10000
+        if start_share is not None and start_price is not None and start_price > 0
+        else 0.0
+    )
+    change_pct = change_pct_from_adjusted_close(
+        close,
+        previous_close,
+        latest_adj_factor,
+        latest_previous_adj_factor,
+        fallback_previous_close=previous_close_for_change,
+    )
+    return EtfLatestMetrics(
+        close=close,
+        previous_close=previous_close,
+        latest_share=latest_share,
+        latest_previous_share=latest_previous_share,
+        scale_yi=scale_yi,
+        start_scale_yi=start_scale_yi,
+        audit_start_scale_yi=audit_start_scale_yi,
+        change_pct=change_pct,
+    )
+
+
+def daily_etf_metrics(
+    *,
+    code: str,
+    day_index: int,
+    window_dates: list[str],
+    context_dates: list[str],
+    daily_prices: dict[str, dict[str, float]],
+    daily_navs: dict[str, dict[str, float]],
+    daily_shares: dict[str, dict[str, float]],
+    daily_amounts: dict[str, dict[str, float]],
+    daily_adj_factors: dict[str, dict[str, float]],
+) -> EtfDailyMetrics:
+    current_date = window_dates[day_index]
+    previous_flow_date = window_dates[day_index + 1]
+    current_price = daily_prices[current_date].get(code)
+    previous_price = daily_prices[previous_flow_date].get(code)
+    current_share = daily_shares[current_date].get(code)
+    previous_share = daily_shares[previous_flow_date].get(code)
+    current_amount_yi = daily_amounts.get(current_date, {}).get(code)
+    current_adj_factor = daily_adj_factors.get(current_date, {}).get(code)
+    previous_adj_factor = daily_adj_factors.get(previous_flow_date, {}).get(code)
+    newer_date = window_dates[day_index - 1] if day_index > 0 else None
+    older_date = context_dates[day_index + 2] if day_index + 2 < len(context_dates) else None
+    newer_price = daily_prices.get(newer_date, {}).get(code) if newer_date else None
+    older_share = daily_shares.get(older_date, {}).get(code) if older_date else None
+    share_adjustment = split_factor_for_flow_adjustment(
+        current_share=current_share,
+        previous_share=previous_share,
+        current_price=current_price,
+        newer_price=newer_price,
+    )
+    comparable_previous_price = previous_price_for_change(
+        current_price=current_price,
+        previous_price=previous_price,
+        previous_share=previous_share,
+        older_share=older_share,
+    )
+    current_scale_price = (
+        split_adjusted_flow_price(
+            scale_price_for_etf(code, current_price, daily_navs.get(current_date, {})),
+            current_price,
+            share_adjustment,
+        )
+        if current_price is not None
+        else None
+    )
+    audit_current_price = (
+        current_price / share_adjustment
+        if share_adjustment is not None and current_price is not None
+        else current_price
+    )
+    previous_scale_price = previous_scale_price_for_scale(
+        code=code,
+        previous_price=previous_price,
+        previous_navs=daily_navs.get(previous_flow_date, {}),
+        comparable_previous_price=comparable_previous_price,
+    )
+    daily_change_pct = (
+        change_pct_from_adjusted_close(
+            current_price,
+            previous_price,
+            current_adj_factor,
+            previous_adj_factor,
+            fallback_previous_close=comparable_previous_price,
+        )
+        if current_price is not None and current_price > 0 and current_share is not None
+        else None
+    )
+    daily_scale_yi = (
+        current_share * current_scale_price / 10000
+        if daily_change_pct is not None and current_scale_price is not None
+        else None
+    )
+    daily_start_scale_yi = (
+        previous_share * previous_scale_price / 10000
+        if current_amount_yi is not None
+        and current_amount_yi > 0
+        and previous_share is not None
+        and previous_scale_price is not None
+        and previous_scale_price > 0
+        else None
+    )
+    if current_price is None or current_share is None or previous_share is None or current_price <= 0:
+        return EtfDailyMetrics(
+            current_date=current_date,
+            current_price=current_price,
+            current_share=current_share,
+            previous_share=previous_share,
+            daily_change_pct=daily_change_pct,
+            daily_scale_yi=daily_scale_yi,
+            current_amount_yi=current_amount_yi,
+            daily_start_scale_yi=daily_start_scale_yi,
+            daily_flow_yi=None,
+            scale_delta_yi=None,
+            market_effect_yi=None,
+            flow_price=None,
+            price_source=None,
+            price_source_label=None,
+            comparable_flow_price=None,
+            comparable_previous_share=None,
+            split_adjusted=False,
+        )
+    flow_price, price_source, price_source_label = flow_price_for_etf(
+        code, current_price, daily_navs.get(current_date, {})
+    )
+    comparable_previous_share = previous_share * share_adjustment if share_adjustment is not None else previous_share
+    comparable_flow_price = split_adjusted_flow_price(flow_price, current_price, share_adjustment)
+    daily_flow_yi = (current_share - comparable_previous_share) * comparable_flow_price / 10000
+    scale_delta_yi = None
+    market_effect_yi = None
+    if comparable_previous_price is not None and comparable_previous_price > 0:
+        scale_delta_yi = current_share * audit_current_price / 10000 - previous_share * comparable_previous_price / 10000
+        market_effect_yi = (
+            previous_share * (current_price - previous_price) / 10000
+            if share_adjustment is not None and previous_price is not None
+            else previous_share * (audit_current_price - comparable_previous_price) / 10000
+        )
+    return EtfDailyMetrics(
+        current_date=current_date,
+        current_price=current_price,
+        current_share=current_share,
+        previous_share=previous_share,
+        daily_change_pct=daily_change_pct,
+        daily_scale_yi=daily_scale_yi,
+        current_amount_yi=current_amount_yi,
+        daily_start_scale_yi=daily_start_scale_yi,
+        daily_flow_yi=daily_flow_yi,
+        scale_delta_yi=scale_delta_yi,
+        market_effect_yi=market_effect_yi,
+        flow_price=flow_price,
+        price_source=price_source,
+        price_source_label=price_source_label,
+        comparable_flow_price=comparable_flow_price,
+        comparable_previous_share=comparable_previous_share,
+        split_adjusted=share_adjustment is not None,
+    )
+
+
+def apply_latest_metrics_to_group(group: EtfFlowGroup, metrics: EtfLatestMetrics) -> None:
+    group.scale_yi += metrics.scale_yi
+    group.start_scale_yi += metrics.start_scale_yi
+    group.audit_start_scale_yi += metrics.audit_start_scale_yi
+    if metrics.change_pct is not None:
+        group.change_weight_yi += metrics.scale_yi
+        group.change_weighted_sum += metrics.change_pct * metrics.scale_yi
+    group.etf_count += 1
+
+
+def apply_daily_metrics_to_group(group: EtfFlowGroup, metrics: EtfDailyMetrics) -> None:
+    if metrics.daily_change_pct is not None and metrics.daily_scale_yi is not None:
+        group.daily_change_weight_yi[metrics.current_date] = (
+            group.daily_change_weight_yi.get(metrics.current_date, 0.0) + metrics.daily_scale_yi
+        )
+        group.daily_change_weighted_sum[metrics.current_date] = (
+            group.daily_change_weighted_sum.get(metrics.current_date, 0.0)
+            + metrics.daily_change_pct * metrics.daily_scale_yi
+        )
+    if metrics.current_amount_yi is not None and metrics.current_amount_yi > 0:
+        group.daily_turnover_yi[metrics.current_date] = (
+            group.daily_turnover_yi.get(metrics.current_date, 0.0) + metrics.current_amount_yi
+        )
+        if metrics.daily_start_scale_yi is not None:
+            group.daily_start_scale_yi[metrics.current_date] = (
+                group.daily_start_scale_yi.get(metrics.current_date, 0.0) + metrics.daily_start_scale_yi
+            )
+    if metrics.daily_flow_yi is None:
+        group.skipped_flow_count += 1
+        return
+    group.daily_net_flow_yi[metrics.current_date] = (
+        group.daily_net_flow_yi.get(metrics.current_date, 0.0) + metrics.daily_flow_yi
+    )
+    if metrics.split_adjusted:
+        group.split_adjusted_count += 1
+    if metrics.scale_delta_yi is not None and metrics.market_effect_yi is not None:
+        group.scale_delta_yi += metrics.scale_delta_yi
+        group.audit_net_flow_yi += metrics.daily_flow_yi
+        group.market_effect_yi += metrics.market_effect_yi
+        group.scale_audit_points += 1
+
+
+def etf_top_item(
+    *,
+    code: str,
+    name: str,
+    latest_metrics: EtfLatestMetrics,
+    net_flow_yi: float,
+    last_flow_price: float,
+    price_source: str,
+    price_source_label: str,
+    latest_flow_share: float | None,
+    previous_flow_share: float | None,
+    skipped_flow_count: int,
+    split_adjusted_count: int,
+) -> EtfTopItem:
+    return {
+        "code": code,
+        "name": name,
+        "scale_yi": round(latest_metrics.scale_yi, 2),
+        "start_scale_yi": round(latest_metrics.start_scale_yi, 2) if latest_metrics.start_scale_yi else None,
+        "net_flow_yi": round(net_flow_yi, 2),
+        "change_pct": round(latest_metrics.change_pct, 2) if latest_metrics.change_pct is not None else None,
+        "flow_price": round(last_flow_price, 4),
+        "price_source": price_source,
+        "price_source_label": price_source_label,
+        "latest_share_wan": round(latest_flow_share, 4) if latest_flow_share is not None else None,
+        "previous_share_wan": round(previous_flow_share, 4) if previous_flow_share is not None else None,
+        "share_change_wan": round(latest_flow_share - previous_flow_share, 4)
+        if latest_flow_share is not None and previous_flow_share is not None
+        else None,
+        "skipped_flow_count": skipped_flow_count,
+        "split_adjusted_count": split_adjusted_count,
+    }
+
+
 def etf_flows_for_window(
     funds: dict[str, dict[str, Any]],
     dates: list[str],
@@ -114,8 +387,8 @@ def etf_flows_for_window(
     excluded_non_target_etf_count = 0
     skipped_flow_count = 0
     for code, fund in funds.items():
-        name = str(fund.get("name") or "")
-        if "ETF" not in name.upper():
+        info = etf_static_info(code, fund)
+        if "ETF" not in info.name.upper():
             continue
         total_etf_count += 1
         close = latest_prices.get(code)
@@ -130,57 +403,43 @@ def etf_flows_for_window(
             skipped_flow_count += 1
             continue
         priced_etf_count += 1
-        benchmark = str(fund.get("benchmark") or "")
-        invest_type = str(fund.get("invest_type") or "")
-        is_target = is_target_equity_etf(name, benchmark)
+        is_target = is_target_equity_etf(info.name, info.benchmark)
         if is_target:
             target_etf_count += 1
         else:
             excluded_non_target_etf_count += 1
             continue
-        classified = classify_etf_group(
-            name,
-            benchmark=benchmark,
-            invest_type=invest_type,
-        )
+        classified = classified_group(info)
         if not classified:
             continue
         classified_target_etf_count += 1
         section, index_name = classified
-        latest_scale_price = scale_price_for_etf(code, close, latest_navs)
-        start_scale_price = scale_price_for_etf(code, start_price, start_navs)
-        scale_yi = latest_share * latest_scale_price / 10000
-        start_scale_yi = start_share * start_scale_price / 10000 if start_share is not None and start_scale_price else 0.0
-        audit_start_scale_yi = (
-            start_share * start_price / 10000
-            if start_share is not None and start_price is not None and start_price > 0
-            else 0.0
-        )
         previous_close_for_change = previous_price_for_change(
             current_price=close,
             previous_price=previous_close,
             previous_share=latest_previous_share,
             older_share=daily_shares.get(context_dates[2], {}).get(code) if len(context_dates) > 2 else None,
         )
-        change_pct = change_pct_from_adjusted_close(
-            close,
-            previous_close,
-            latest_adj_factor,
-            latest_previous_adj_factor,
-            fallback_previous_close=previous_close_for_change,
+        latest_metrics = latest_etf_metrics(
+            code=code,
+            close=close,
+            previous_close=previous_close,
+            latest_share=latest_share,
+            latest_previous_share=latest_previous_share,
+            start_price=start_price,
+            start_share=start_share,
+            latest_navs=latest_navs,
+            start_navs=start_navs,
+            latest_adj_factor=latest_adj_factor,
+            latest_previous_adj_factor=latest_previous_adj_factor,
+            previous_close_for_change=previous_close_for_change,
         )
         key = (section, index_name)
         group = groups.setdefault(
             key,
             EtfFlowGroup(section=section, index_name=index_name, index_code=index_code_for_group(section, index_name)),
         )
-        group.scale_yi += scale_yi
-        group.start_scale_yi += start_scale_yi
-        group.audit_start_scale_yi += audit_start_scale_yi
-        if change_pct is not None:
-            group.change_weight_yi += scale_yi
-            group.change_weighted_sum += change_pct * scale_yi
-        group.etf_count += 1
+        apply_latest_metrics_to_group(group, latest_metrics)
         etf_net_flow_yi = 0.0
         etf_nav_count = 0
         etf_close_count = 0
@@ -192,106 +451,32 @@ def etf_flows_for_window(
         latest_flow_share: float | None = None
         previous_flow_share: float | None = None
         for day_index in range(window_days):
-            current_date = window_dates[day_index]
-            previous_flow_date = window_dates[day_index + 1]
-            current_price = daily_prices[current_date].get(code)
-            previous_price = daily_prices[previous_flow_date].get(code)
-            current_share = daily_shares[current_date].get(code)
-            previous_share = daily_shares[previous_flow_date].get(code)
-            current_amount_yi = daily_amounts.get(current_date, {}).get(code)
-            current_adj_factor = daily_adj_factors.get(current_date, {}).get(code)
-            previous_adj_factor = daily_adj_factors.get(previous_flow_date, {}).get(code)
-            newer_date = window_dates[day_index - 1] if day_index > 0 else None
-            older_date = context_dates[day_index + 2] if day_index + 2 < len(context_dates) else None
-            newer_price = daily_prices.get(newer_date, {}).get(code) if newer_date else None
-            older_share = daily_shares.get(older_date, {}).get(code) if older_date else None
-            share_adjustment = split_factor_for_flow_adjustment(
-                current_share=current_share,
-                previous_share=previous_share,
-                current_price=current_price,
-                newer_price=newer_price,
-            )
-            comparable_previous_price = previous_price_for_change(
-                current_price=current_price,
-                previous_price=previous_price,
-                previous_share=previous_share,
-                older_share=older_share,
-            )
-            current_scale_price = split_adjusted_flow_price(
-                scale_price_for_etf(code, current_price, daily_navs.get(current_date, {})),
-                current_price,
-                share_adjustment,
-            ) if current_price is not None else None
-            audit_current_price = (
-                current_price / share_adjustment
-                if share_adjustment is not None and current_price is not None
-                else current_price
-            )
-            previous_scale_price = previous_scale_price_for_scale(
+            daily_metrics = daily_etf_metrics(
                 code=code,
-                previous_price=previous_price,
-                previous_navs=daily_navs.get(previous_flow_date, {}),
-                comparable_previous_price=comparable_previous_price,
+                day_index=day_index,
+                window_dates=window_dates,
+                context_dates=context_dates,
+                daily_prices=daily_prices,
+                daily_navs=daily_navs,
+                daily_shares=daily_shares,
+                daily_amounts=daily_amounts,
+                daily_adj_factors=daily_adj_factors,
             )
-            daily_change_pct = (
-                change_pct_from_adjusted_close(
-                    current_price,
-                    previous_price,
-                    current_adj_factor,
-                    previous_adj_factor,
-                    fallback_previous_close=comparable_previous_price,
-                )
-                if current_price is not None and current_price > 0 and current_share is not None
-                else None
-            )
-            if daily_change_pct is not None:
-                daily_scale_yi = current_share * current_scale_price / 10000
-                group.daily_change_weight_yi[current_date] = group.daily_change_weight_yi.get(current_date, 0.0) + daily_scale_yi
-                group.daily_change_weighted_sum[current_date] = (
-                    group.daily_change_weighted_sum.get(current_date, 0.0) + daily_change_pct * daily_scale_yi
-                )
-            if current_amount_yi is not None and current_amount_yi > 0:
-                group.daily_turnover_yi[current_date] = group.daily_turnover_yi.get(current_date, 0.0) + current_amount_yi
-                if previous_share is not None and previous_scale_price is not None and previous_scale_price > 0:
-                    group.daily_start_scale_yi[current_date] = (
-                        group.daily_start_scale_yi.get(current_date, 0.0) + previous_share * previous_scale_price / 10000
-                    )
-            if current_price is None or current_share is None or previous_share is None or current_price <= 0:
+            apply_daily_metrics_to_group(group, daily_metrics)
+            if daily_metrics.daily_flow_yi is None:
                 skipped_flow_count += 1
-                group.skipped_flow_count += 1
                 etf_skipped_flow_count += 1
                 continue
-            flow_price, price_source, price_source_label = flow_price_for_etf(
-                code, current_price, daily_navs.get(current_date, {})
-            )
-            comparable_previous_share = previous_share * share_adjustment if share_adjustment is not None else previous_share
-            comparable_flow_price = split_adjusted_flow_price(flow_price, current_price, share_adjustment)
-            daily_flow_yi = (current_share - comparable_previous_share) * comparable_flow_price / 10000
-            etf_net_flow_yi += daily_flow_yi
-            group.daily_net_flow_yi[current_date] = group.daily_net_flow_yi.get(current_date, 0.0) + daily_flow_yi
-            if share_adjustment is not None:
-                group.split_adjusted_count += 1
+            etf_net_flow_yi += daily_metrics.daily_flow_yi
+            if daily_metrics.split_adjusted:
                 etf_split_adjusted_count += 1
-            if comparable_previous_price is not None and comparable_previous_price > 0:
-                scale_delta_yi = (
-                    current_share * audit_current_price / 10000 - previous_share * comparable_previous_price / 10000
-                )
-                market_effect_yi = (
-                    previous_share * (current_price - previous_price) / 10000
-                    if share_adjustment is not None and previous_price is not None
-                    else previous_share * (audit_current_price - comparable_previous_price) / 10000
-                )
-                group.scale_delta_yi += scale_delta_yi
-                group.audit_net_flow_yi += daily_flow_yi
-                group.market_effect_yi += market_effect_yi
-                group.scale_audit_points += 1
             if day_index == 0:
-                latest_flow_share = current_share
-                previous_flow_share = comparable_previous_share
-            last_flow_price = comparable_flow_price
-            last_price_source = price_source
-            last_price_source_label = price_source_label
-            if price_source == "nav":
+                latest_flow_share = daily_metrics.current_share
+                previous_flow_share = daily_metrics.comparable_previous_share
+            last_flow_price = daily_metrics.comparable_flow_price or last_flow_price
+            last_price_source = daily_metrics.price_source or last_price_source
+            last_price_source_label = daily_metrics.price_source_label or last_price_source_label
+            if daily_metrics.price_source == "nav":
                 group.nav_count += 1
                 etf_nav_count += 1
             else:
@@ -300,24 +485,19 @@ def etf_flows_for_window(
         group.net_flow_yi += etf_net_flow_yi
         price_source_label = price_source_label_from_counts(etf_nav_count, etf_close_count) or last_price_source_label
         group.top_etfs.append(
-            {
-                "code": code,
-                "name": name,
-                "scale_yi": round(scale_yi, 2),
-                "start_scale_yi": round(start_scale_yi, 2) if start_scale_yi else None,
-                "net_flow_yi": round(etf_net_flow_yi, 2),
-                "change_pct": round(change_pct, 2) if change_pct is not None else None,
-                "flow_price": round(last_flow_price, 4),
-                "price_source": last_price_source,
-                "price_source_label": price_source_label,
-                "latest_share_wan": round(latest_flow_share, 4) if latest_flow_share is not None else None,
-                "previous_share_wan": round(previous_flow_share, 4) if previous_flow_share is not None else None,
-                "share_change_wan": round(latest_flow_share - previous_flow_share, 4)
-                if latest_flow_share is not None and previous_flow_share is not None
-                else None,
-                "skipped_flow_count": etf_skipped_flow_count,
-                "split_adjusted_count": etf_split_adjusted_count,
-            }
+            etf_top_item(
+                code=code,
+                name=info.name,
+                latest_metrics=latest_metrics,
+                net_flow_yi=etf_net_flow_yi,
+                last_flow_price=last_flow_price,
+                price_source=last_price_source,
+                price_source_label=price_source_label,
+                latest_flow_share=latest_flow_share,
+                previous_flow_share=previous_flow_share,
+                skipped_flow_count=etf_skipped_flow_count,
+                split_adjusted_count=etf_split_adjusted_count,
+            )
         )
 
     sections = {

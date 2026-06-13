@@ -2,6 +2,7 @@
 
 ## 2026-06-13
 
+- 优化资金流向计算层可维护性：新增 `policy.py` 集中窗口、阈值、缓存和份额拆分识别容差等口径参数；新增 `types.py` 承载计算层 TypedDict/dataclass；拆分 `calculator.py` 中 ETF 主循环的静态信息、最新日指标、日度指标、聚合累加和 top ETF 组装逻辑；测试不再通过 `service.py` 私有兼容别名引用底层函数。新增 `tests/fixtures/etf_flow_regression_snapshot.json` 固定普通净申购、成交占比和份额拆分样本的核心会计输出，确保本次为行为不变重构。
 - 正式对齐 DeepSeek 当前 API 口径：AI 总结默认模型从即将废弃的 `deepseek-chat` 切换为 `deepseek-v4-flash`，请求显式关闭 thinking、启用 JSON 输出、限制输出长度并补充 JSON 示例；文档新增 DeepSeek 配置和“规则摘要”回退排查说明。
 - 优化页面头部 AI 总结展示：关注点从“数据 + tag 胶囊”改为“标题 + 一到两句原因说明”，后端规范化时丢弃模型返回的 `tags`，前端移除标签渲染和样式，使摘要更像可直接阅读的决策提示。
 - 新增页面头部 AI 总结：后端从资金流 payload 压缩出结构化摘要输入，覆盖 ETF 数据质量、各窗口分区净申购、Top 流入/流出和“一级净申购 + 二级成交热度 + 当日涨跌幅”候选信号；配置 `DEEPSEEK_API_KEY` 后调用 DeepSeek 生成固定 JSON 摘要，未配置或调用失败时使用本地规则摘要兜底。前端展示一句话总览、关键关注点、风险和数据质量，不改变任何计算口径。
