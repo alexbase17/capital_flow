@@ -48,6 +48,13 @@ function sectionValue(data, key, sectionKey) {
   return sumBy(sectionRows(data, key, sectionKey), "net_flow_yi");
 }
 
+function sectionTurnoverRatio(data, key, sectionKey) {
+  const rows = sectionRows(data, key, sectionKey).filter(row => row.turnover_ratio !== null && row.turnover_ratio !== undefined);
+  const turnover = sumBy(rows, "turnover_yi");
+  const startScale = sumBy(rows, "start_scale_yi");
+  return startScale ? turnover / startScale * 100 : null;
+}
+
 function renderTotalFlow(data) {
   const wrap = document.getElementById("totalFlowCards");
   const columns = [
@@ -61,8 +68,17 @@ function renderTotalFlow(data) {
   wrap.innerHTML = `
     <div class="flow-matrix" role="table" aria-label="ETF净申购金额">
       <div class="flow-matrix-head" role="row">
-        <div role="columnheader">窗口</div>
+        <div role="columnheader">指标</div>
         ${columns.map(([title]) => `<div role="columnheader">${title}</div>`).join("")}
+      </div>
+      <div class="flow-matrix-row" role="row">
+        <div class="window-cell" role="cell">5日成交额占比</div>
+        <div class="matrix-value muted" role="cell">--</div>
+        <div class="matrix-value muted" role="cell">--</div>
+        ${["broad", "a_industry", "hk_industry", "strategy"].map(sectionKey => {
+          const value = sectionTurnoverRatio(data, "5d", sectionKey);
+          return `<div class="matrix-value neutral" role="cell">${fmtPct(value)}</div>`;
+        }).join("")}
       </div>
       ${windowKeys.map(key => `
         <div class="flow-matrix-row" role="row">
@@ -125,12 +141,15 @@ function mergeRowsForSection(data, sectionKey) {
         scale_yi: row.scale_yi,
         start_scale_yi: row.start_scale_yi,
         daily_net_flow: row.daily_net_flow || [],
-        daily_change_pct: row.daily_change_pct || []
+        daily_change_pct: row.daily_change_pct || [],
+        daily_turnover: row.daily_turnover || []
       };
       if (key === "1d") current.change_pct = row.change_pct;
+      if (key === "5d") current.turnover_5d = row.turnover_ratio;
       if (key === "60d") {
         current.daily_net_flow = row.daily_net_flow || [];
         current.daily_change_pct = row.daily_change_pct || [];
+        current.daily_turnover = row.daily_turnover || [];
       }
       rowsByKey.set(keyValue, current);
     });
@@ -143,8 +162,10 @@ function mergeRowsForSection(data, sectionKey) {
       [`ratio_${key}`, row.metrics[key]?.net_flow_ratio ?? null]
     ])),
     scale_yi: row.metrics["1d"]?.scale_yi ?? row.metrics["60d"]?.scale_yi ?? 0,
+    turnover_5d: row.metrics["5d"]?.turnover_ratio ?? row.turnover_5d ?? null,
     daily_net_flow: row.metrics["60d"]?.daily_net_flow || row.daily_net_flow || [],
-    daily_change_pct: row.metrics["60d"]?.daily_change_pct || row.daily_change_pct || []
+    daily_change_pct: row.metrics["60d"]?.daily_change_pct || row.daily_change_pct || [],
+    daily_turnover: row.metrics["60d"]?.daily_turnover || row.daily_turnover || []
   }));
 }
 
@@ -227,36 +248,23 @@ function rollingWindowPoints(points, windowSize = 5) {
   });
 }
 
+function rollingTurnoverRatioPoints(points, windowSize = 5) {
+  if (points.length < windowSize) return [];
+  return points.slice(windowSize - 1).map((point, index) => {
+    const windowPoints = points.slice(index, index + windowSize);
+    const value = windowPoints.reduce((total, item) => total + Number(item.value || 0), 0);
+    const startScale = Number(windowPoints[0]?.start_scale_yi || 0);
+    return {
+      date: point.date,
+      start_date: windowPoints[0]?.date || "",
+      end_date: point.date,
+      value: startScale > 0 ? value / startScale * 100 : null
+    };
+  }).filter(point => point.value !== null);
+}
+
 function tooltipPayload(value) {
   return escapeHtml(value);
-}
-
-function shortDateLabel(value) {
-  const parts = String(value || "").split("-");
-  if (parts.length >= 3) return `${parts[1]}-${parts[2]}`;
-  return String(value || "");
-}
-
-function chartTickIndexes(count, maxTicks = 5) {
-  if (count <= 0) return [];
-  if (count <= maxTicks) return Array.from({ length: count }, (_, index) => index);
-  const indexes = new Set();
-  const tickCount = Math.min(maxTicks, count);
-  for (let tick = 0; tick < tickCount; tick += 1) {
-    indexes.add(Math.round((tick * (count - 1)) / (tickCount - 1)));
-  }
-  return Array.from(indexes).sort((a, b) => a - b);
-}
-
-function renderChartRangeTicks(items) {
-  if (!items.length) return "";
-  const ticks = chartTickIndexes(items.length).map(index => {
-    const item = items[index];
-    const x = Math.min(1, Math.max(0, Number(item.x || 0)));
-    const edgeClass = x <= 0.02 ? " first" : x >= 0.98 ? " last" : "";
-    return `<span class="chart-tick${edgeClass}" style="left: ${(x * 100).toFixed(2)}%">${escapeHtml(shortDateLabel(item.date))}</span>`;
-  }).join("");
-  return `<div class="chart-range">${ticks}</div>`;
 }
 
 function nearestTooltipIndex(ratio, items) {
@@ -302,7 +310,7 @@ function renderDailyFlowBars(points, label) {
   }));
   return `
     <div class="flow-chart">
-      <div class="chart-title">${label}</div>
+      <div class="chart-title" style="--zero-y: ${zeroY.toFixed(1)}px">${label}</div>
       <div class="flow-chart-body">
         <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
           <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
@@ -312,7 +320,6 @@ function renderDailyFlowBars(points, label) {
           <div class="chart-hover-layer" aria-hidden="true"></div>
           <div class="chart-tooltip" aria-hidden="true"></div>
         </div>
-        ${renderChartRangeTicks(tooltipValues)}
       </div>
     </div>
   `;
@@ -345,7 +352,7 @@ function renderDailyChangeLine(points, label) {
   }));
   return `
     <div class="flow-chart">
-      <div class="chart-title">${label}</div>
+      <div class="chart-title" style="--zero-y: ${zeroY.toFixed(1)}px">${label}</div>
       <div class="flow-chart-body">
         <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
           <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
@@ -356,7 +363,49 @@ function renderDailyChangeLine(points, label) {
           <div class="chart-hover-layer" aria-hidden="true"></div>
           <div class="chart-tooltip" aria-hidden="true"></div>
         </div>
-        ${renderChartRangeTicks(tooltipValues)}
+      </div>
+    </div>
+  `;
+}
+
+function renderLineChart(points, label, valueLabel, formatter = fmtYi) {
+  if (!points.length) return '<div class="empty">暂无走势数据</div>';
+  const width = 1040;
+  const height = 180;
+  const plotTop = 10;
+  const plotHeight = 150;
+  const { min, span } = chartDomain(points);
+  const zeroY = plotTop + plotHeight - ((0 - min) / span) * plotHeight;
+  const path = points.map((point, index) => {
+    const x = points.length === 1 ? 0 : (index / (points.length - 1)) * width;
+    const y = plotTop + plotHeight - ((Number(point.value || 0) - min) / span) * plotHeight;
+    return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const dots = points.map((point, index) => {
+    const x = points.length === 1 ? 0 : (index / (points.length - 1)) * width;
+    const y = plotTop + plotHeight - ((Number(point.value || 0) - min) / span) * plotHeight;
+    return `
+      <circle class="rolling-point ${flowClass(point.value)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.6"></circle>
+    `;
+  }).join("");
+  const tooltipValues = points.map((point, index) => ({
+    x: points.length === 1 ? 0 : index / (points.length - 1),
+    date: point.end_date || point.date,
+    label: `${point.start_date} 至 ${point.end_date} · ${valueLabel} ${formatter(point.value)}`
+  }));
+  return `
+    <div class="flow-chart">
+      <div class="chart-title" style="--zero-y: ${zeroY.toFixed(1)}px">${label}</div>
+      <div class="flow-chart-body">
+        <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
+          <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
+            <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
+            <path d="${path}" class="flow-line"></path>
+            ${dots}
+          </svg>
+          <div class="chart-hover-layer" aria-hidden="true"></div>
+          <div class="chart-tooltip" aria-hidden="true"></div>
+        </div>
       </div>
     </div>
   `;
@@ -365,56 +414,25 @@ function renderDailyChangeLine(points, label) {
 function renderRollingFlowLine(points, label) {
   const rollingPoints = rollingWindowPoints(points, 5);
   if (!rollingPoints.length) return '<div class="empty">暂无5日滑动窗口数据</div>';
-  const width = 1040;
-  const height = 180;
-  const plotTop = 10;
-  const plotHeight = 150;
-  const { min, span } = chartDomain(rollingPoints);
-  const zeroY = plotTop + plotHeight - ((0 - min) / span) * plotHeight;
-  const path = rollingPoints.map((point, index) => {
-    const x = rollingPoints.length === 1 ? 0 : (index / (rollingPoints.length - 1)) * width;
-    const y = plotTop + plotHeight - ((Number(point.value || 0) - min) / span) * plotHeight;
-    return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-  const dots = rollingPoints.map((point, index) => {
-    const x = rollingPoints.length === 1 ? 0 : (index / (rollingPoints.length - 1)) * width;
-    const y = plotTop + plotHeight - ((Number(point.value || 0) - min) / span) * plotHeight;
-    return `
-      <circle class="rolling-point ${flowClass(point.value)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.6"></circle>
-    `;
-  }).join("");
-  const tooltipValues = rollingPoints.map((point, index) => ({
-    x: rollingPoints.length === 1 ? 0 : index / (rollingPoints.length - 1),
-    date: point.end_date,
-    label: `${point.start_date} 至 ${point.end_date} · 净申购金额 ${fmtYi(point.value)}`
-  }));
-  return `
-    <div class="flow-chart">
-      <div class="chart-title">${label}</div>
-      <div class="flow-chart-body">
-        <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
-          <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
-            <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
-            <path d="${path}" class="flow-line"></path>
-            ${dots}
-          </svg>
-          <div class="chart-hover-layer" aria-hidden="true"></div>
-          <div class="chart-tooltip" aria-hidden="true"></div>
-        </div>
-        ${renderChartRangeTicks(tooltipValues)}
-      </div>
-    </div>
-  `;
+  return renderLineChart(rollingPoints, label, "净申购金额", fmtYi);
+}
+
+function renderRollingTurnoverRatioLine(points, label) {
+  const rollingPoints = rollingTurnoverRatioPoints(points, 5);
+  if (!rollingPoints.length) return '<div class="empty">暂无5日滑动成交额占比数据</div>';
+  return renderLineChart(rollingPoints, label, "成交额占比", fmtPct);
 }
 
 function renderFlowChart(row) {
   const points = row.daily_net_flow || [];
   const changePoints = row.daily_change_pct || [];
-  if (!points.length && !changePoints.length) return '<div class="empty">暂无60日走势数据</div>';
+  const turnoverPoints = row.daily_turnover || [];
+  if (!points.length && !changePoints.length && !turnoverPoints.length) return '<div class="empty">暂无60日走势数据</div>';
   return `
     <div class="flow-chart-viewport">
       <div class="flow-chart-stack">
         ${renderDailyChangeLine(changePoints, "分天涨跌幅")}
+        ${renderRollingTurnoverRatioLine(turnoverPoints, "5日滑动窗口成交额占比")}
         ${renderDailyFlowBars(points, "分天净申购金额")}
         ${renderRollingFlowLine(points, "5日滑动窗口净申购金额")}
       </div>
@@ -460,12 +478,13 @@ function renderTable(tableId, sectionKey) {
     return;
   }
   const displayRows = sortedRows(tableId, rows);
-  const columnCount = windowKeys.length * 2 + 3;
+  const columnCount = windowKeys.length * 2 + 4;
   table.innerHTML = `
     <thead>
       <tr>
         <th>指数 / 主题</th>
         <th class="num-head">${sortableHeader(tableId, "change_pct", "当日涨跌幅", "当日涨跌幅为该指数或主题下 ETF 最新交易日相对上一交易日的规模加权涨跌幅。")}</th>
+        <th class="num-head">${sortableHeader(tableId, "turnover_5d", "5日成交额占比", "近5个交易日场内成交额合计 / 窗口期初 ETF 规模，用于观察二级市场交易热度，不等同于一级市场净申购资金流。")}</th>
         ${windowKeys.map(key => `<th class="num-head">${sortableHeader(tableId, `flow_${key}`, `${windowLabels[key]}净申购`, "按窗口内每日 ETF 份额日期相邻差逐日乘以同日单位净值后累加；同日净值缺失时用当日收盘价估算。正数表示净申购，负数表示净赎回。")}</th>`).join("")}
         ${windowKeys.map(key => `<th class="num-head">${sortableHeader(tableId, `ratio_${key}`, `${windowLabels[key]}净申购占比`, "净申购占比 = 对应窗口净申购金额 / 窗口期初 ETF 规模。期初规模按该窗口起点交易日的份额和收盘价估算，用于衡量资金流入强度。")}</th>`).join("")}
         <th class="num-head">${sortableHeader(tableId, "scale_yi", "当日ETF规模")}</th>
@@ -479,6 +498,7 @@ function renderTable(tableId, sectionKey) {
           <tr class="data-row${expanded ? " expanded" : ""}" data-row-key="${key}" tabindex="0">
             <td class="name-cell"><span class="expand-mark">${expanded ? "−" : "+"}</span>${formatIndexName(row)}</td>
             ${metricCell(row.change_pct, fmtPct)}
+            ${metricCell(row.turnover_5d, fmtPct)}
             ${windowKeys.map(key => metricCell(row[`flow_${key}`])).join("")}
             ${windowKeys.map(key => metricCell(row[`ratio_${key}`], fmtPct)).join("")}
             <td class="num">${fmtYi(row.scale_yi)}</td>

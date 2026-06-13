@@ -40,6 +40,8 @@ class EtfFlowGroup:
     daily_net_flow_yi: dict[str, float] = field(default_factory=dict)
     daily_change_weight_yi: dict[str, float] = field(default_factory=dict)
     daily_change_weighted_sum: dict[str, float] = field(default_factory=dict)
+    daily_turnover_yi: dict[str, float] = field(default_factory=dict)
+    daily_start_scale_yi: dict[str, float] = field(default_factory=dict)
     top_etfs: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -74,6 +76,7 @@ def etf_flows_for_window(
     daily_prices: dict[str, dict[str, float]],
     daily_navs: dict[str, dict[str, float]],
     daily_shares: dict[str, dict[str, float]],
+    daily_amounts: dict[str, dict[str, float]] | None = None,
     data_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if len(dates) < window_days + 1:
@@ -86,6 +89,7 @@ def etf_flows_for_window(
     latest_shares = daily_shares[latest_date]
     start_prices = daily_prices[previous_date]
     start_shares = daily_shares[previous_date]
+    daily_amounts = daily_amounts or {}
     groups: dict[tuple[str, str], EtfFlowGroup] = {}
     total_etf_count = 0
     priced_etf_count = 0
@@ -154,6 +158,7 @@ def etf_flows_for_window(
             previous_price = daily_prices[previous_flow_date].get(code)
             current_share = daily_shares[current_date].get(code)
             previous_share = daily_shares[previous_flow_date].get(code)
+            current_amount_yi = daily_amounts.get(current_date, {}).get(code)
             daily_change_pct = (
                 change_pct_from_close(current_price, previous_price)
                 if current_price is not None and current_price > 0 and current_share is not None
@@ -165,6 +170,12 @@ def etf_flows_for_window(
                 group.daily_change_weighted_sum[current_date] = (
                     group.daily_change_weighted_sum.get(current_date, 0.0) + daily_change_pct * daily_scale_yi
                 )
+            if current_amount_yi is not None and current_amount_yi > 0:
+                group.daily_turnover_yi[current_date] = group.daily_turnover_yi.get(current_date, 0.0) + current_amount_yi
+                if previous_share is not None and previous_price is not None and previous_price > 0:
+                    group.daily_start_scale_yi[current_date] = (
+                        group.daily_start_scale_yi.get(current_date, 0.0) + previous_share * previous_price / 10000
+                    )
             if current_price is None or current_share is None or previous_share is None or current_price <= 0:
                 skipped_flow_count += 1
                 group.skipped_flow_count += 1
@@ -296,6 +307,10 @@ def group_payload(group: EtfFlowGroup) -> dict[str, Any]:
         else None,
         "net_flow_yi": round(group.net_flow_yi, 2),
         "net_flow_ratio": round(group.net_flow_yi / group.start_scale_yi * 100, 2) if group.start_scale_yi else None,
+        "turnover_yi": round(sum(group.daily_turnover_yi.values()), 2),
+        "turnover_ratio": round(sum(group.daily_turnover_yi.values()) / group.start_scale_yi * 100, 2)
+        if group.daily_turnover_yi and group.start_scale_yi
+        else None,
         "scale_yi": round(group.scale_yi, 2),
         "start_scale_yi": round(group.start_scale_yi, 2),
         "etf_count": group.etf_count,
@@ -311,6 +326,14 @@ def group_payload(group: EtfFlowGroup) -> dict[str, Any]:
             {"date": fmt_date(trade_date), "value": round(group.daily_change_weighted_sum[trade_date] / weight, 2)}
             for trade_date, weight in sorted(group.daily_change_weight_yi.items())
             if weight > 0
+        ],
+        "daily_turnover": [
+            {
+                "date": fmt_date(trade_date),
+                "value": round(value, 2),
+                "start_scale_yi": round(group.daily_start_scale_yi.get(trade_date, 0.0), 2),
+            }
+            for trade_date, value in sorted(group.daily_turnover_yi.items())
         ],
         "top_etfs": top_etfs,
         "debug_etfs": debug_etfs,

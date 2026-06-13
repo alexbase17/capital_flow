@@ -77,12 +77,19 @@ def _recent_fund_daily_dates_uncached(client: TushareClient, min_count: int) -> 
     raise TushareUnavailable(f"fund_daily: cannot find {min_count} recent ETF trading dates")
 
 
-def fund_daily_map(client: TushareClient, trade_date: str) -> dict[str, float]:
-    return cached_map(
-        f"fund_daily/{trade_date}",
-        lambda: _fund_daily_map_uncached(client, trade_date),
+def fund_daily_snapshot_map(client: TushareClient, trade_date: str) -> dict[str, dict[str, float]]:
+    return cached_json(
+        f"fund_daily_snapshot/v1/{trade_date}",
+        lambda: _fund_daily_snapshot_map_uncached(client, trade_date),
         max_age_seconds=dated_cache_ttl(trade_date),
     )
+
+
+def fund_daily_map(client: TushareClient, trade_date: str) -> dict[str, float]:
+    return {
+        code: values.get("close", 0.0)
+        for code, values in fund_daily_snapshot_map(client, trade_date).items()
+    }
 
 
 def fund_share_map(client: TushareClient, trade_date: str) -> dict[str, float]:
@@ -102,9 +109,16 @@ def fund_nav_map(client: TushareClient, nav_date: str) -> dict[str, float]:
     )
 
 
-def _fund_daily_map_uncached(client: TushareClient, trade_date: str) -> dict[str, float]:
-    rows = client.query("fund_daily", {"trade_date": trade_date}, "ts_code,trade_date,close")
-    return {str(row["ts_code"]): to_float(row.get("close")) for row in rows if row.get("ts_code")}
+def _fund_daily_snapshot_map_uncached(client: TushareClient, trade_date: str) -> dict[str, dict[str, float]]:
+    rows = client.query("fund_daily", {"trade_date": trade_date}, "ts_code,trade_date,close,amount")
+    return {
+        str(row["ts_code"]): {
+            "close": to_float(row.get("close")),
+            "amount_yi": to_float(row.get("amount")) * 0.00001,
+        }
+        for row in rows
+        if row.get("ts_code")
+    }
 
 
 def _fund_share_map_uncached(client: TushareClient, trade_date: str) -> dict[str, float]:

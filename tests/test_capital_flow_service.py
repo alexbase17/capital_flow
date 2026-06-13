@@ -46,6 +46,21 @@ class CapitalFlowServiceTests(unittest.TestCase):
 
         self.assertEqual(client.calls, 1)
 
+    def test_fund_daily_snapshot_maps_close_and_amount(self):
+        test_case = self
+
+        class FakeClient:
+            def query(self, api_name, params=None, fields=None):
+                test_case.assertEqual(api_name, "fund_daily")
+                test_case.assertEqual(fields, "ts_code,trade_date,close,amount")
+                return [{"ts_code": "510300.SH", "close": "4.2", "amount": "123456"}]
+
+        with TemporaryDirectory() as tmpdir, patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)):
+            self.assertEqual(
+                fetcher.fund_daily_snapshot_map(FakeClient(), "20250102"),
+                {"510300.SH": {"close": 4.2, "amount_yi": 1.23456}},
+            )
+
     def test_fetcher_cache_can_be_disabled_for_diagnostics(self):
         class FakeClient:
             def __init__(self):
@@ -674,13 +689,26 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 "20260610": {"510300.SH": 10000},
                 "20260609": {"510300.SH": 9000},
             },
+            daily_amounts={
+                "20260611": {"510300.SH": 2.0},
+                "20260610": {"510300.SH": 1.0},
+            },
         )
 
         row = payload["sections"]["broad"]["rows"][0]
         self.assertEqual(row["net_flow_yi"], 1.19)
         self.assertEqual(row["start_scale_yi"], 3.42)
+        self.assertEqual(row["turnover_yi"], 3.0)
+        self.assertEqual(row["turnover_ratio"], 87.72)
         self.assertEqual(row["daily_net_flow"], [{"date": "2026-06-10", "value": 0.39}, {"date": "2026-06-11", "value": 0.8}])
         self.assertEqual(row["daily_change_pct"], [{"date": "2026-06-10", "value": 2.63}, {"date": "2026-06-11", "value": 2.56}])
+        self.assertEqual(
+            row["daily_turnover"],
+            [
+                {"date": "2026-06-10", "value": 1.0, "start_scale_yi": 3.42},
+                {"date": "2026-06-11", "value": 2.0, "start_scale_yi": 3.9},
+            ],
+        )
 
     def test_etf_flow_ratio_uses_window_start_scale(self):
         funds = {

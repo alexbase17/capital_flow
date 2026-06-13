@@ -10,7 +10,7 @@
 |---|---|---|
 | `moneyflow_hsgt` | `src/capital_flow/fetcher.py` | 北上/南下资金当日净额 |
 | `fund_basic` | `src/capital_flow/fetcher.py` | ETF 基础信息、基金名称、跟踪基准、投资类型 |
-| `fund_daily` | `src/capital_flow/fetcher.py` | ETF 交易日、收盘价 |
+| `fund_daily` | `src/capital_flow/fetcher.py` | ETF 交易日、收盘价、成交额 |
 | `fund_share` | `src/capital_flow/fetcher.py` | ETF 份额，计算相邻交易日份额变动 |
 | `fund_nav` | `src/capital_flow/fetcher.py` | ETF 单位净值，优先用于净申购金额计算 |
 
@@ -146,6 +146,24 @@ moneyflow_hsgt
 窗口起点是该窗口最早的相邻交易日。例如 `20日` 窗口使用第 21 个交易日作为期初规模日。
 
 该口径用于衡量资金流入强度，避免用最新规模作分母时被窗口内大额申购抬高后的规模稀释。页面仍单独展示“当日 ETF 规模”，用于判断当前主题体量和展示阈值。
+
+## ETF 成交额占比
+
+成交额来自 `fund_daily.amount`，按 TuShare 日线成交额字段处理为千元，计算层折算为亿元：
+
+```text
+日成交额 = fund_daily.amount * 0.00001
+窗口成交额 = sum(窗口内日成交额)
+成交额占比 = 窗口成交额 / 窗口期初 ETF 规模 * 100
+```
+
+当前前台只展示 `5日成交额占比`：
+
+- 总览矩阵首行展示各 ETF 分区近 5 个交易日成交额占比；北上/南下列不适用，显示 `--`。
+- 明细表在“当日涨跌幅”后展示 `5日成交额占比`。
+- 展开图展示 `5日滑动窗口成交额占比`，每个点使用该 5 日窗口成交额合计除以该滚动窗口期初 ETF 规模。
+
+该指标用于观察二级市场交易热度和流动性活跃程度，不等同于一级市场 ETF 净申购资金流。若成交额字段缺失，则对应占比显示为 `--`，不按 0 处理。
 
 ## 当日 ETF 规模
 

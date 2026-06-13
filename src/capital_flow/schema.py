@@ -34,6 +34,8 @@ REQUIRED_ROW_KEYS = {
     "change_pct",
     "net_flow_yi",
     "net_flow_ratio",
+    "turnover_yi",
+    "turnover_ratio",
     "scale_yi",
     "start_scale_yi",
     "etf_count",
@@ -43,6 +45,7 @@ REQUIRED_ROW_KEYS = {
     "price_source_label",
     "daily_net_flow",
     "daily_change_pct",
+    "daily_turnover",
     "top_etfs",
     "debug_etfs",
 }

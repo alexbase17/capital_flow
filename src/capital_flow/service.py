@@ -19,6 +19,7 @@ from src.capital_flow.calculator import (
 from src.capital_flow.fetcher import (
     fund_basic_map,
     fund_daily_map,
+    fund_daily_snapshot_map,
     fund_nav_map,
     fund_share_map,
     recent_fund_daily_dates,
@@ -48,6 +49,7 @@ _etf_flows_for_window = etf_flows_for_window
 _flow_price_for_etf = flow_price_for_etf
 _fund_basic_map = fund_basic_map
 _fund_daily_map = fund_daily_map
+_fund_daily_snapshot_map = fund_daily_snapshot_map
 _fund_nav_map = fund_nav_map
 _fund_share_map = fund_share_map
 _hsgt_item = hsgt_item
@@ -83,7 +85,15 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
     candidate_fund_dates = recent_fund_daily_dates(client, required_fund_dates + FUND_DATE_LOOKBACK_BUFFER)
     hsgt_rows = recent_hsgt_rows(client, max_window_days)
     funds = fund_basic_map(client)
-    candidate_prices = {trade_date: fund_daily_map(client, trade_date) for trade_date in candidate_fund_dates}
+    candidate_snapshots = {trade_date: fund_daily_snapshot_map(client, trade_date) for trade_date in candidate_fund_dates}
+    candidate_prices = {
+        trade_date: {code: values.get("close", 0.0) for code, values in snapshot.items()}
+        for trade_date, snapshot in candidate_snapshots.items()
+    }
+    candidate_amounts = {
+        trade_date: {code: values.get("amount_yi", 0.0) for code, values in snapshot.items()}
+        for trade_date, snapshot in candidate_snapshots.items()
+    }
     candidate_shares = {trade_date: fund_share_map(client, trade_date) for trade_date in candidate_fund_dates}
     required_codes = active_target_etf_codes(funds, candidate_prices, candidate_shares, candidate_fund_dates)
     fund_dates, etf_status = aligned_fund_dates(
@@ -94,6 +104,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
         required_codes=required_codes,
     )
     daily_prices = {trade_date: candidate_prices[trade_date] for trade_date in fund_dates}
+    daily_amounts = {trade_date: candidate_amounts[trade_date] for trade_date in fund_dates}
     daily_shares = {trade_date: candidate_shares[trade_date] for trade_date in fund_dates}
     daily_navs = {trade_date: fund_nav_map(client, trade_date) for trade_date in fund_dates[:-1]}
     etf_status = {**etf_status, "nav_date": fmt_date(fund_dates[0]) if daily_navs.get(fund_dates[0]) else None}
@@ -112,6 +123,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
                 daily_prices=daily_prices,
                 daily_navs=daily_navs,
                 daily_shares=daily_shares,
+                daily_amounts=daily_amounts,
                 data_status=window_etf_status(etf_status, window_dates),
             ),
         }
