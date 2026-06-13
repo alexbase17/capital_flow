@@ -85,6 +85,7 @@ def etf_flows_for_window(
     daily_navs: dict[str, dict[str, float]],
     daily_shares: dict[str, dict[str, float]],
     daily_amounts: dict[str, dict[str, float]] | None = None,
+    daily_adj_factors: dict[str, dict[str, float]] | None = None,
     data_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if len(dates) < window_days + 1:
@@ -101,6 +102,7 @@ def etf_flows_for_window(
     start_prices = daily_prices[previous_date]
     start_shares = daily_shares[previous_date]
     daily_amounts = daily_amounts or {}
+    daily_adj_factors = daily_adj_factors or {}
     groups: dict[tuple[str, str], EtfFlowGroup] = {}
     total_etf_count = 0
     priced_etf_count = 0
@@ -117,6 +119,8 @@ def etf_flows_for_window(
         previous_close = latest_previous_prices.get(code)
         latest_share = latest_shares.get(code)
         latest_previous_share = latest_previous_shares.get(code)
+        latest_adj_factor = daily_adj_factors.get(latest_date, {}).get(code)
+        latest_previous_adj_factor = daily_adj_factors.get(latest_previous_date, {}).get(code)
         start_price = start_prices.get(code)
         start_share = start_shares.get(code)
         if close is None or latest_share is None or close <= 0:
@@ -148,7 +152,13 @@ def etf_flows_for_window(
             previous_share=latest_previous_share,
             older_share=daily_shares.get(context_dates[2], {}).get(code) if len(context_dates) > 2 else None,
         )
-        change_pct = change_pct_from_close(close, previous_close_for_change)
+        change_pct = change_pct_from_adjusted_close(
+            close,
+            previous_close,
+            latest_adj_factor,
+            latest_previous_adj_factor,
+            fallback_previous_close=previous_close_for_change,
+        )
         key = (section, index_name)
         group = groups.setdefault(
             key,
@@ -178,11 +188,13 @@ def etf_flows_for_window(
             current_share = daily_shares[current_date].get(code)
             previous_share = daily_shares[previous_flow_date].get(code)
             current_amount_yi = daily_amounts.get(current_date, {}).get(code)
+            current_adj_factor = daily_adj_factors.get(current_date, {}).get(code)
+            previous_adj_factor = daily_adj_factors.get(previous_flow_date, {}).get(code)
             newer_date = window_dates[day_index - 1] if day_index > 0 else None
             older_date = context_dates[day_index + 2] if day_index + 2 < len(context_dates) else None
             newer_price = daily_prices.get(newer_date, {}).get(code) if newer_date else None
             older_share = daily_shares.get(older_date, {}).get(code) if older_date else None
-            split_factor = split_factor_for_flow_adjustment(
+            share_adjustment = split_factor_for_flow_adjustment(
                 current_share=current_share,
                 previous_share=previous_share,
                 current_price=current_price,
@@ -194,9 +206,19 @@ def etf_flows_for_window(
                 previous_share=previous_share,
                 older_share=older_share,
             )
-            current_scale_price = current_price / split_factor if split_factor and current_price is not None else current_price
+            current_scale_price = (
+                current_price / share_adjustment
+                if share_adjustment is not None and current_price is not None
+                else current_price
+            )
             daily_change_pct = (
-                change_pct_from_close(current_price, comparable_previous_price)
+                change_pct_from_adjusted_close(
+                    current_price,
+                    previous_price,
+                    current_adj_factor,
+                    previous_adj_factor,
+                    fallback_previous_close=comparable_previous_price,
+                )
                 if current_price is not None and current_price > 0 and current_share is not None
                 else None
             )
@@ -220,12 +242,12 @@ def etf_flows_for_window(
             flow_price, price_source, price_source_label = flow_price_for_etf(
                 code, current_price, daily_navs.get(current_date, {})
             )
-            comparable_previous_share = previous_share * split_factor if split_factor else previous_share
-            comparable_flow_price = split_adjusted_flow_price(flow_price, current_price, split_factor)
+            comparable_previous_share = previous_share * share_adjustment if share_adjustment is not None else previous_share
+            comparable_flow_price = split_adjusted_flow_price(flow_price, current_price, share_adjustment)
             daily_flow_yi = (current_share - comparable_previous_share) * comparable_flow_price / 10000
             etf_net_flow_yi += daily_flow_yi
             group.daily_net_flow_yi[current_date] = group.daily_net_flow_yi.get(current_date, 0.0) + daily_flow_yi
-            if split_factor:
+            if share_adjustment is not None:
                 group.split_adjusted_count += 1
                 etf_split_adjusted_count += 1
             if comparable_previous_price is not None and comparable_previous_price > 0:
@@ -234,7 +256,7 @@ def etf_flows_for_window(
                 )
                 market_effect_yi = (
                     previous_share * (current_price - previous_price) / 10000
-                    if split_factor and previous_price is not None
+                    if share_adjustment is not None and previous_price is not None
                     else previous_share * (current_scale_price - comparable_previous_price) / 10000
                 )
                 group.scale_delta_yi += scale_delta_yi
@@ -353,7 +375,7 @@ def split_factor_for_flow_adjustment(
     previous_share: float | None,
     current_price: float | None,
     newer_price: float | None,
-) -> int | None:
+) -> float | None:
     if (
         current_share is None
         or previous_share is None
@@ -367,11 +389,11 @@ def split_factor_for_flow_adjustment(
         return None
     share_ratio = current_share / previous_share
     price_ratio = newer_price / current_price
-    for factor in SPLIT_FACTORS:
-        if ratio_close(share_ratio, factor, SPLIT_SHARE_TOLERANCE) and ratio_close(
-            price_ratio, 1 / factor, SPLIT_PRICE_TOLERANCE
+    for share_multiplier in share_adjustment_multipliers():
+        if ratio_close(share_ratio, share_multiplier, SPLIT_SHARE_TOLERANCE) and ratio_close(
+            price_ratio, 1 / share_multiplier, SPLIT_PRICE_TOLERANCE
         ):
-            return factor
+            return share_multiplier
     return None
 
 
@@ -395,26 +417,48 @@ def previous_price_for_change(
         return previous_price
     share_ratio = previous_share / older_share
     price_ratio = current_price / previous_price
-    for factor in SPLIT_FACTORS:
-        if ratio_close(share_ratio, factor, SPLIT_SHARE_TOLERANCE) and ratio_close(
-            price_ratio, 1 / factor, SPLIT_PRICE_TOLERANCE
+    for share_multiplier in share_adjustment_multipliers():
+        if ratio_close(share_ratio, share_multiplier, SPLIT_SHARE_TOLERANCE) and ratio_close(
+            price_ratio, 1 / share_multiplier, SPLIT_PRICE_TOLERANCE
         ):
-            return previous_price / factor
+            return previous_price / share_multiplier
     return previous_price
 
 
-def split_adjusted_flow_price(flow_price: float, current_price: float, split_factor: int | None) -> float:
-    if not split_factor:
+def split_adjusted_flow_price(flow_price: float, current_price: float, share_adjustment: float | None) -> float:
+    if share_adjustment is None:
         return flow_price
     if flow_price > 0 and current_price > 0 and ratio_close(
-        flow_price / current_price, 1 / split_factor, SPLIT_PRICE_TOLERANCE
+        flow_price / current_price, 1 / share_adjustment, SPLIT_PRICE_TOLERANCE
     ):
         return flow_price
-    return flow_price / split_factor
+    return flow_price / share_adjustment
+
+
+def share_adjustment_multipliers() -> tuple[float, ...]:
+    return tuple(float(factor) for factor in SPLIT_FACTORS) + tuple(1 / factor for factor in SPLIT_FACTORS)
 
 
 def ratio_close(value: float, target: float, tolerance: float) -> bool:
     return target > 0 and abs(value - target) / target <= tolerance
+
+
+def change_pct_from_adjusted_close(
+    close: float,
+    previous_close: float | None,
+    adj_factor: float | None,
+    previous_adj_factor: float | None,
+    *,
+    fallback_previous_close: float | None = None,
+) -> float | None:
+    if previous_close is None or previous_close <= 0:
+        return None
+    if adj_factor is not None and previous_adj_factor is not None and adj_factor > 0 and previous_adj_factor > 0:
+        adjusted_close = close * adj_factor
+        adjusted_previous_close = previous_close * previous_adj_factor
+        if adjusted_previous_close > 0:
+            return (adjusted_close - adjusted_previous_close) / adjusted_previous_close * 100
+    return change_pct_from_close(close, fallback_previous_close if fallback_previous_close is not None else previous_close)
 
 
 def change_pct_from_close(close: float, previous_close: float | None) -> float | None:

@@ -109,6 +109,15 @@ def fund_nav_map(client: TushareClient, nav_date: str) -> dict[str, float]:
     )
 
 
+def fund_adj_map(client: TushareClient, trade_date: str) -> dict[str, float]:
+    return cached_map(
+        f"fund_adj/{trade_date}",
+        lambda: _fund_adj_map_uncached(client, trade_date),
+        max_age_seconds=dated_cache_ttl(trade_date),
+        cache_empty=True,
+    )
+
+
 def _fund_daily_snapshot_map_uncached(client: TushareClient, trade_date: str) -> dict[str, dict[str, float]]:
     rows = client.query("fund_daily", {"trade_date": trade_date}, "ts_code,trade_date,close,amount")
     return {
@@ -132,6 +141,15 @@ def _fund_nav_map_uncached(client: TushareClient, nav_date: str) -> dict[str, fl
         str(row["ts_code"]): to_float(row.get("unit_nav"))
         for row in rows
         if row.get("ts_code") and to_float(row.get("unit_nav")) > 0
+    }
+
+
+def _fund_adj_map_uncached(client: TushareClient, trade_date: str) -> dict[str, float]:
+    rows = client.query("fund_adj", {"trade_date": trade_date}, "ts_code,trade_date,adj_factor")
+    return {
+        str(row["ts_code"]): to_float(row.get("adj_factor"))
+        for row in rows
+        if row.get("ts_code") and to_float(row.get("adj_factor")) > 0
     }
 
 

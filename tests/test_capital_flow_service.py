@@ -9,6 +9,7 @@ from src.capital_flow.service import (
     active_target_etf_codes,
     _change_pct,
     _etf_flows_for_window,
+    _fund_adj_map,
     _flow_price_for_etf,
     _hsgt_item,
     _section_payload,
@@ -66,6 +67,19 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 fetcher.fund_daily_snapshot_map(FakeClient(), "20250102"),
                 {"510300.SH": {"close": 4.2, "amount_yi": 1.23456}},
             )
+
+    def test_fund_adj_map_reads_adjustment_factor(self):
+        test_case = self
+
+        class FakeClient:
+            def query(self, api_name, params=None, fields=None):
+                test_case.assertEqual(api_name, "fund_adj")
+                test_case.assertEqual(params, {"trade_date": "20250102"})
+                test_case.assertEqual(fields, "ts_code,trade_date,adj_factor")
+                return [{"ts_code": "510300.SH", "adj_factor": "1.267"}]
+
+        with TemporaryDirectory() as tmpdir, patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)):
+            self.assertEqual(_fund_adj_map(FakeClient(), "20250102"), {"510300.SH": 1.267})
 
     def test_fetcher_cache_can_be_disabled_for_diagnostics(self):
         class FakeClient:
@@ -771,6 +785,71 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(row["debug_etfs"][0]["flow_price"], 1.02)
         self.assertEqual(row["debug_etfs"][0]["split_adjusted_count"], 1)
         self.assertEqual(row["scale_audit"]["status"], "ok")
+
+    def test_etf_flow_adjusts_reverse_share_split_before_price_adjusts(self):
+        funds = {
+            "510300.SH": {
+                "name": "沪深300ETF华泰柏瑞",
+                "benchmark": "沪深300指数收益率",
+                "invest_type": "被动指数型",
+            },
+        }
+        payload = _etf_flows_for_window(
+            funds,
+            ["20260611", "20260610", "20260609"],
+            2,
+            daily_prices={
+                "20260611": {"510300.SH": 30.9},
+                "20260610": {"510300.SH": 10.2},
+                "20260609": {"510300.SH": 10.0},
+            },
+            daily_navs={"20260611": {}, "20260610": {}},
+            daily_shares={
+                "20260611": {"510300.SH": 10200},
+                "20260610": {"510300.SH": 10100},
+                "20260609": {"510300.SH": 30000},
+            },
+        )
+
+        row = payload["sections"]["broad"]["rows"][0]
+        self.assertEqual(row["daily_net_flow"], [{"date": "2026-06-10", "value": 0.31}, {"date": "2026-06-11", "value": 0.31}])
+        self.assertEqual(row["daily_change_pct"], [{"date": "2026-06-10", "value": 2.0}, {"date": "2026-06-11", "value": 0.98}])
+        self.assertEqual(row["net_flow_yi"], 0.61)
+        self.assertEqual(row["split_adjusted_count"], 1)
+        self.assertEqual(row["debug_etfs"][0]["flow_price"], 30.6)
+        self.assertEqual(row["scale_audit"]["status"], "ok")
+
+    def test_etf_change_pct_uses_adjusted_factor_for_dividend_days(self):
+        funds = {
+            "510300.SH": {
+                "name": "沪深300ETF华泰柏瑞",
+                "benchmark": "沪深300指数收益率",
+                "invest_type": "被动指数型",
+            },
+        }
+        payload = _etf_flows_for_window(
+            funds,
+            ["20260611", "20260610"],
+            1,
+            daily_prices={
+                "20260611": {"510300.SH": 9.6},
+                "20260610": {"510300.SH": 10.0},
+            },
+            daily_navs={"20260611": {}},
+            daily_shares={
+                "20260611": {"510300.SH": 101000},
+                "20260610": {"510300.SH": 100000},
+            },
+            daily_adj_factors={
+                "20260611": {"510300.SH": 1.05},
+                "20260610": {"510300.SH": 1.0},
+            },
+        )
+
+        row = payload["sections"]["broad"]["rows"][0]
+        self.assertEqual(row["change_pct"], 0.8)
+        self.assertEqual(row["daily_change_pct"], [{"date": "2026-06-11", "value": 0.8}])
+        self.assertEqual(row["net_flow_yi"], 0.96)
 
     def test_turnover_ratio_averages_daily_turnover_intensity(self):
         funds = {

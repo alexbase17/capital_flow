@@ -17,6 +17,7 @@ from src.capital_flow.calculator import (
     section_payload,
 )
 from src.capital_flow.fetcher import (
+    fund_adj_map,
     fund_basic_map,
     fund_daily_map,
     fund_daily_snapshot_map,
@@ -46,6 +47,7 @@ _CACHE: dict[str, Any] = {"payloads": {}}
 _change_pct = change_pct_from_close
 _etf_flows_for_window = etf_flows_for_window
 _flow_price_for_etf = flow_price_for_etf
+_fund_adj_map = fund_adj_map
 _fund_basic_map = fund_basic_map
 _fund_daily_map = fund_daily_map
 _fund_daily_snapshot_map = fund_daily_snapshot_map
@@ -106,6 +108,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
     daily_amounts = {trade_date: candidate_amounts[trade_date] for trade_date in fund_dates}
     daily_shares = {trade_date: candidate_shares[trade_date] for trade_date in fund_dates}
     daily_navs = {trade_date: fund_nav_map(client, trade_date) for trade_date in fund_dates[:-1]}
+    daily_adj_factors = {trade_date: fund_adj_map(client, trade_date) for trade_date in fund_dates}
     etf_status = {**etf_status, "nav_date": fmt_date(fund_dates[0]) if daily_navs.get(fund_dates[0]) else None}
     window_payloads = {}
     for window_config in FLOW_WINDOWS:
@@ -123,6 +126,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
                 daily_navs=daily_navs,
                 daily_shares=daily_shares,
                 daily_amounts=daily_amounts,
+                daily_adj_factors=daily_adj_factors,
                 data_status=window_etf_status(etf_status, window_dates),
             ),
         }
@@ -144,6 +148,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
             "时间窗口按最近 N 个交易日统计，页面中的“日”均指 ETF 有效交易日；ETF 净申购金额为窗口内每日份额变动金额累加，北上/南下资金为窗口内每日净额累加。",
             "ETF 每日净申购只使用目标权益 ETF 价格和份额 100% 对齐的交易日；最新交易日数据不完整时自动回退到最近完整交易日。",
             "ETF 每日净申购金额优先按份额变动乘以同日单位净值计算；同日净值缺失时用同日收盘价估算，近期净值发布后会随短 TTL 缓存自动回填。",
+            "当日和分天涨跌幅优先使用 fund_adj 复权因子计算，用于处理现金分红、份额分拆、合并和折算对收益序列的影响；ETF 净申购金额不使用复权价。",
             "5日成交均值占比为近 5 个交易日逐日计算场内成交额 / 当日期初 ETF 规模后取均值，用于观察二级市场交易热度。",
             "总览并列展示不同资金来源，不直接加总；宽基被动 ETF 排除增强、价值、成长、红利低波等策略变体；宽基、策略因子、A 股行业和港股行业均只展示聚合规模不低于 20 亿元的项目；A 股行业和港股行业只按跟踪指数归类，未匹配到标准指数规则的 ETF 不纳入行业聚合。",
         ],
