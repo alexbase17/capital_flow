@@ -196,8 +196,13 @@ function renderCapitalFlow(data) {
   renderTable("strategyTable", "strategy");
 }
 
-loadCapitalFlow();
-setupSectionNav();
+function initializeCapitalFlowPage() {
+  setupSectionNav();
+  loadCapitalFlow();
+}
 
-loadCapitalFlow();
-setupSectionNav();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initializeCapitalFlowPage, { once: true });
+} else {
+  initializeCapitalFlowPage();
+}

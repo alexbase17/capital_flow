@@ -1,6 +1,6 @@
 # 架构说明
 
-更新时间：2026-06-13
+更新时间：2026-06-14
 
 ## 定位
 
@@ -42,8 +42,10 @@
 | `src/http_client.py` | 标准库 HTTP JSON 请求封装 |
 | `src/tushare_client.py` | TuShare Pro 最小客户端，统一错误处理 |
 | `src/capital_flow/routes.py` | 页面路由和 API 路由 |
-| `src/capital_flow/service.py` | 缓存、窗口选择、TuShare 拉取编排、payload 校验 |
-| `src/capital_flow/ai_summary.py` | AI 总结结构化输入、DeepSeek 调用和本地规则兜底 |
+| `src/capital_flow/service.py` | 缓存、窗口选择、TuShare 拉取编排、payload 校验；服务层已拆出市场输入准备、多窗口 payload 组装和口径说明 |
+| `src/capital_flow/ai_summary.py` | AI 总结缓存、结构化输入、DeepSeek 调用、输出规范化和本地规则兜底 |
+| `src/capital_flow/ai_summary_prompt.py` | DeepSeek system/task/schema/example prompt 构造，便于独立调优提示词 |
+| `src/capital_flow/observability.py` | 后台结构化日志事件，当前记录 payload 缓存命中、回退和构建完成状态 |
 | `src/capital_flow/fetcher.py` | 按接口封装 TuShare 数据读取 |
 | `src/capital_flow/policy.py` | 统一维护窗口、规模阈值、缓存 TTL、份额拆分识别容差等口径参数 |
 | `src/capital_flow/types.py` | 计算层共享的 TypedDict/dataclass 数据结构 |
@@ -167,7 +169,10 @@ ETF 规模、净申购占比分母和成交均值占比分母使用净值优先 
 
 | 测试文件 | 覆盖内容 |
 |---|---|
-| `tests/test_capital_flow_service.py` | TuShare 数据样本、计算口径、分类规则、分类审计、payload 结构 |
+| `tests/test_capital_flow_service.py` | 服务缓存、路由兜底、日期对齐、NAV 回填和 payload 结构 |
+| `tests/test_capital_flow_calculator.py` | ETF 净申购、涨跌幅、成交均值占比、份额拆分/折算和规模审计 |
+| `tests/test_capital_flow_taxonomy.py` | ETF 分类规则、分类主数据、覆盖率和审计 |
+| `tests/test_capital_flow_ai_summary.py` | AI 摘要输入、prompt 请求、缓存、规范化和失败隐藏 |
 | `tests/test_capital_flow_ui_contract.py` | 前端脚本关键契约、字段名、默认排序 |
 
 统一验证入口：
@@ -175,6 +180,30 @@ ETF 规模、净申购占比分母和成交均值占比分母使用净值优先 
 ```bash
 scripts/verify_all.sh
 ```
+
+提交前如改动页面模板、静态资源或服务启动链路，额外运行：
+
+```bash
+scripts/check_web.sh
+.venv/bin/python scripts/verify_dashboard_page.py http://127.0.0.1:5083
+```
+
+`verify_dashboard_page.py` 会检查首页实际下发的拆分 JS 顺序、静态资源可访问性、入口只初始化一次，以及 `/api/capital-flow` 至少返回可渲染分区，用于捕捉“页面只有标题/加载失败”这类运行时问题。
+
+分类主数据校验：
+
+```bash
+scripts/validate_taxonomy_data.py
+scripts/validate_taxonomy_data.py --audit --sample-limit 5
+```
+
+资金流快照审计：
+
+```bash
+scripts/audit_capital_flow_snapshot.py --max-items 12
+```
+
+该脚本读取最近成功 payload 缓存，提示 stale 缓存、NAV 估算占比、跳过日度点、分类覆盖率和大额/高占比/高成交均值占比异常行；默认只输出审计信息，不阻断页面。
 
 ## 变更建议
 

@@ -13,6 +13,9 @@ echo "== Python unit tests =="
 echo "== Python compile check =="
 "$PYTHON_BIN" -m compileall scripts src tests
 
+echo "== Taxonomy data validation =="
+"$PYTHON_BIN" scripts/validate_taxonomy_data.py
+
 echo "== JavaScript syntax check =="
 for script in src/static/capital_flow*.js; do
   node --check "$script"

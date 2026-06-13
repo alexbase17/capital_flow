@@ -1,6 +1,6 @@
 # 运维说明
 
-更新时间：2026-06-13
+更新时间：2026-06-14
 
 ## 定位
 
@@ -138,6 +138,14 @@ BASE_URL=http://192.168.5.6:5083 scripts/check_web.sh
 
 期望 HTTP 状态码均为 `200`。成功生成的主 payload 会落盘缓存；服务重启后若 12 小时内存在上次成功 payload，API 会先快速返回缓存并在页面状态栏提示“使用上次成功缓存”。如果后续 TuShare 短时限流或网络失败，API 也会返回上次成功 payload，避免整页空白。
 
+页面静态资源烟测：
+
+```bash
+.venv/bin/python scripts/verify_dashboard_page.py http://127.0.0.1:5083
+```
+
+该脚本会验证首页 HTML 引入了全部拆分后的 `capital_flow*.js`，脚本顺序正确，入口 JS 只初始化一次，静态资源和 `/api/capital-flow` 均可访问。修改模板、JS 拆分、启动脚本或遇到“页面只有标题/加载失败”时必须运行。
+
 AI 摘要单独验证：
 
 ```bash
@@ -172,7 +180,22 @@ scripts/verify_all.sh
 - `node --check src/static/capital_flow*.js`，覆盖资金流前端全部 JS 模块。
 - Git whitespace 检查。
 
-`verify_all.sh` 额外包含 Python 编译检查。
+`verify_all.sh` 额外包含 Python 编译检查和 `scripts/validate_taxonomy_data.py` 分类主数据校验。
+
+分类主数据单独校验：
+
+```bash
+scripts/validate_taxonomy_data.py
+scripts/validate_taxonomy_data.py --audit --sample-limit 5
+```
+
+资金流快照审计：
+
+```bash
+scripts/audit_capital_flow_snapshot.py --max-items 12
+```
+
+该脚本读取最近成功的 `capital_flow_payload` 缓存，输出 stale 缓存、NAV 估算占比、跳过流量点、分类覆盖率和大额/高占比/高成交均值占比异常行。默认只提示，不会阻断服务；上线前如希望发现 warning 即失败，可加 `--fail-on-warning`。
 
 `scripts/start_web.sh`、`scripts/verify_fast.sh` 和 `scripts/verify_all.sh` 共享 `scripts/lib_env.sh`：
 
@@ -197,6 +220,15 @@ logs/web.err.log
 tail -100 logs/web.log
 tail -100 logs/web.err.log
 ```
+
+服务会输出 `capital_flow` 结构化 JSON 事件，当前覆盖：
+
+- `capital_flow_payload_memory_cache_hit`
+- `capital_flow_payload_disk_cache_hit`
+- `capital_flow_payload_stale_cache_used`
+- `capital_flow_payload_built`
+
+这些事件用于排查页面是否命中缓存、是否因 TuShare 或网络问题使用上次成功 payload，以及本次构建的数据日和 NAV 估算占比。
 
 ## 数据缓存
 

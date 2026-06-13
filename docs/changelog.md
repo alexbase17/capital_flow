@@ -2,6 +2,10 @@
 
 ## 2026-06-14
 
+- 修复前端入口重复初始化问题：`capital_flow.js` 改为 DOM ready 后只执行一次 `setupSectionNav()` 和 `loadCapitalFlow()`，避免重复请求、半初始化状态和页面偶发加载失败；UI 契约测试新增重复初始化保护。
+- 新增页面资源烟测 `scripts/verify_dashboard_page.py`，验证首页实际下发的 6 个拆分 JS、脚本顺序、入口单次初始化、静态资源可访问和 `/api/capital-flow` 可渲染，用于捕捉“页面只有标题/加载失败”类问题。
+- 继续优化长期维护性：服务层 `_build_capital_flow_payload` 拆出市场输入准备、NAV/复权因子加载、多窗口 payload 组装和口径说明；AI 总结 prompt 拆到 `ai_summary_prompt.py`，以后调提示词不再混入缓存/解析逻辑。
+- 新增后台资金流快照审计 `scripts/audit_capital_flow_snapshot.py`，读取最近成功 payload 缓存并提示 stale 缓存、NAV 估算占比、跳过流量点、分类覆盖率和大额/高占比/高成交均值占比异常行；新增 `observability.py` 输出 payload 缓存/构建结构化日志。`verify_all.sh` 接入分类主数据校验。
 - 加固资金流向缓存兜底状态：当主数据刷新失败或服务 warm start 使用上次成功 payload 时，`payload_cache_status=stale` 和错误原因会同步写入顶层、当前窗口和全部 `window_payloads` 的 ETF `data_status`，避免后台审计或 AI 摘要误以为所有窗口都是新鲜计算结果。
 - AI 摘要输入新增 `quality.payload_cache_status` / `payload_cache_error`，并更新 DeepSeek prompt：缓存兜底数据只能按“上次成功数据”解读，不能表述为本次已成功刷新的最新结果。
 - 修正 ETF 明细排错字段的多日窗口口径：`top_etfs/debug_etfs` 中 `previous_share_wan`、`share_change_wan` 现在使用窗口期初可比份额，并新增 `window_start_share_wan`、`window_share_change_wan`，避免排查长窗口异常时误读为最新相邻两日份额差。

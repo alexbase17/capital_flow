@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from src.tushare_client import TushareClient, TushareUnavailable
@@ -11,6 +12,7 @@ from src.capital_flow.calculator import (
     etf_flows_for_window,
     north_south_flow_from_rows,
 )
+from src.capital_flow.observability import log_event
 from src.capital_flow.policy import (
     DEFAULT_FLOW_WINDOW,
     ETF_CACHE_SECONDS,
@@ -42,6 +44,19 @@ _CACHE: dict[str, Any] = {"payloads": {}}
 CAPITAL_FLOW_PAYLOAD_SCHEMA_VERSION = "2026-06-14.1"
 
 
+@dataclass(frozen=True)
+class MarketInputBundle:
+    fund_dates: list[str]
+    hsgt_rows: list[dict[str, Any]]
+    funds: dict[str, dict[str, Any]]
+    daily_prices: dict[str, dict[str, float]]
+    daily_amounts: dict[str, dict[str, float]]
+    daily_shares: dict[str, dict[str, float]]
+    daily_navs: dict[str, dict[str, float]]
+    daily_adj_factors: dict[str, dict[str, float]]
+    etf_status: dict[str, Any]
+
+
 def capital_flow_payload(
     force_refresh: bool = False,
     client: TushareClient | None = None,
@@ -52,6 +67,7 @@ def capital_flow_payload(
     now = time.time()
     cached = _CACHE["payloads"].get(cache_key)
     if not force_refresh and cached is not None and now < cached["expires_at"]:
+        log_event("capital_flow_payload_memory_cache_hit", window=cache_key)
         return cached["payload"]
     if not force_refresh and cached is None:
         warm_payload = read_payload_cache(cache_key, max_age_seconds=PAYLOAD_DISK_CACHE_SECONDS)
@@ -59,6 +75,7 @@ def capital_flow_payload(
             payload = mark_payload_cache_fallback(warm_payload, "service warm start")
             validate_capital_flow_payload(payload)
             _CACHE["payloads"][cache_key] = {"expires_at": now + ETF_CACHE_SECONDS, "payload": payload}
+            log_event("capital_flow_payload_disk_cache_hit", window=cache_key, reason="service warm start")
             return payload
     try:
         payload = _build_capital_flow_payload(client or TushareClient.from_env(), selected_window)
@@ -69,10 +86,17 @@ def capital_flow_payload(
         payload = mark_payload_cache_fallback(stale_payload, str(exc))
         validate_capital_flow_payload(payload)
         _CACHE["payloads"][cache_key] = {"expires_at": now + ETF_CACHE_SECONDS, "payload": payload}
+        log_event("capital_flow_payload_stale_cache_used", window=cache_key, error=str(exc))
         return payload
     validate_capital_flow_payload(payload)
     write_payload_cache(cache_key, payload)
     _CACHE["payloads"][cache_key] = {"expires_at": now + ETF_CACHE_SECONDS, "payload": payload}
+    log_event(
+        "capital_flow_payload_built",
+        window=cache_key,
+        as_of_date=payload.get("etf", {}).get("latest_date"),
+        nav_estimate_ratio_pct=payload.get("etf", {}).get("quality", {}).get("nav_estimate_ratio_pct"),
+    )
     return payload
 
 
@@ -110,6 +134,30 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
     if not client.enabled:
         raise TushareUnavailable("TUSHARE_TOKEN is not set")
     key, label, window_days = selected_window
+    market_inputs = prepare_market_inputs(client)
+    window_payloads = build_window_payloads(market_inputs)
+    selected_payload = window_payloads[key]
+    payload = {
+        "payload_schema_version": CAPITAL_FLOW_PAYLOAD_SCHEMA_VERSION,
+        "data_status": {
+            "etf": selected_payload["etf"]["data_status"],
+            "north_south": north_south_data_status(market_inputs.hsgt_rows),
+        },
+        "north_south": selected_payload["north_south"],
+        "etf": selected_payload["etf"],
+        "window_payloads": window_payloads,
+        "windows": _window_options(),
+        "default_window": DEFAULT_FLOW_WINDOW,
+        "selected_window": key,
+        "selected_window_label": label,
+        "threshold_yi": MIN_INDEX_SCALE_YI,
+        "notes": capital_flow_notes(),
+    }
+    payload["ai_summary"] = capital_flow_ai_summary(payload, use_deepseek=False)
+    return payload
+
+
+def prepare_market_inputs(client: TushareClient) -> MarketInputBundle:
     max_window_days = max(config[2] for config in FLOW_WINDOWS)
     required_fund_dates = max_window_days + 2
     candidate_fund_dates = recent_fund_daily_dates(client, required_fund_dates + FUND_DATE_LOOKBACK_BUFFER)
@@ -136,14 +184,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
     daily_prices = {trade_date: candidate_prices[trade_date] for trade_date in fund_dates}
     daily_amounts = {trade_date: candidate_amounts[trade_date] for trade_date in fund_dates}
     daily_shares = {trade_date: candidate_shares[trade_date] for trade_date in fund_dates}
-    daily_navs = {}
-    nav_fetch_error_count = 0
-    for trade_date in fund_dates[:-1]:
-        try:
-            daily_navs[trade_date] = fund_nav_map(client, trade_date)
-        except TushareUnavailable:
-            daily_navs[trade_date] = {}
-            nav_fetch_error_count += 1
+    daily_navs, nav_fetch_error_count = load_daily_navs(client, fund_dates)
     nav_backfilled_count = fill_missing_navs(
         client,
         daily_navs,
@@ -151,14 +192,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
         required_codes=required_codes,
         daily_prices=daily_prices,
     )
-    daily_adj_factors = {}
-    adj_fetch_error_count = 0
-    for trade_date in fund_dates:
-        try:
-            daily_adj_factors[trade_date] = fund_adj_map(client, trade_date)
-        except TushareUnavailable:
-            daily_adj_factors[trade_date] = {}
-            adj_fetch_error_count += 1
+    daily_adj_factors, adj_fetch_error_count = load_daily_adj_factors(client, fund_dates)
     fill_missing_adj_factors(
         client,
         daily_adj_factors,
@@ -173,53 +207,83 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
         "nav_fetch_error_count": nav_fetch_error_count,
         "adj_fetch_error_count": adj_fetch_error_count,
     }
+    return MarketInputBundle(
+        fund_dates=fund_dates,
+        hsgt_rows=hsgt_rows,
+        funds=funds,
+        daily_prices=daily_prices,
+        daily_amounts=daily_amounts,
+        daily_shares=daily_shares,
+        daily_navs=daily_navs,
+        daily_adj_factors=daily_adj_factors,
+        etf_status=etf_status,
+    )
+
+
+def load_daily_navs(
+    client: TushareClient,
+    fund_dates: list[str],
+) -> tuple[dict[str, dict[str, float]], int]:
+    daily_navs = {}
+    fetch_error_count = 0
+    for trade_date in fund_dates[:-1]:
+        try:
+            daily_navs[trade_date] = fund_nav_map(client, trade_date)
+        except TushareUnavailable:
+            daily_navs[trade_date] = {}
+            fetch_error_count += 1
+    return daily_navs, fetch_error_count
+
+
+def load_daily_adj_factors(
+    client: TushareClient,
+    fund_dates: list[str],
+) -> tuple[dict[str, dict[str, float]], int]:
+    daily_adj_factors = {}
+    fetch_error_count = 0
+    for trade_date in fund_dates:
+        try:
+            daily_adj_factors[trade_date] = fund_adj_map(client, trade_date)
+        except TushareUnavailable:
+            daily_adj_factors[trade_date] = {}
+            fetch_error_count += 1
+    return daily_adj_factors, fetch_error_count
+
+
+def build_window_payloads(market_inputs: MarketInputBundle) -> dict[str, dict[str, Any]]:
     window_payloads = {}
     for window_config in FLOW_WINDOWS:
         window_key, window_label, configured_days = window_config
-        window_dates = fund_dates[: configured_days + 2]
+        window_dates = market_inputs.fund_dates[: configured_days + 2]
         window_payloads[window_key] = {
             "label": window_label,
             "days": configured_days,
-            "north_south": north_south_flow_from_rows(hsgt_rows, configured_days),
+            "north_south": north_south_flow_from_rows(market_inputs.hsgt_rows, configured_days),
             "etf": etf_flows_for_window(
-                funds,
+                market_inputs.funds,
                 window_dates,
                 configured_days,
-                daily_prices=daily_prices,
-                daily_navs=daily_navs,
-                daily_shares=daily_shares,
-                daily_amounts=daily_amounts,
-                daily_adj_factors=daily_adj_factors,
-                data_status=window_etf_status(etf_status, window_dates),
+                daily_prices=market_inputs.daily_prices,
+                daily_navs=market_inputs.daily_navs,
+                daily_shares=market_inputs.daily_shares,
+                daily_amounts=market_inputs.daily_amounts,
+                daily_adj_factors=market_inputs.daily_adj_factors,
+                data_status=window_etf_status(market_inputs.etf_status, window_dates),
             ),
         }
-    selected_payload = window_payloads[key]
-    payload = {
-        "payload_schema_version": CAPITAL_FLOW_PAYLOAD_SCHEMA_VERSION,
-        "data_status": {
-            "etf": selected_payload["etf"]["data_status"],
-            "north_south": north_south_data_status(hsgt_rows),
-        },
-        "north_south": selected_payload["north_south"],
-        "etf": selected_payload["etf"],
-        "window_payloads": window_payloads,
-        "windows": _window_options(),
-        "default_window": DEFAULT_FLOW_WINDOW,
-        "selected_window": key,
-        "selected_window_label": label,
-        "threshold_yi": MIN_INDEX_SCALE_YI,
-        "notes": [
-            "时间窗口按最近 N 个交易日统计，页面中的“日”均指 ETF 有效交易日；ETF 净申购金额为窗口内每日份额变动金额累加，北上/南下资金为窗口内每日净额累加。",
-            "ETF 每日净申购只使用目标权益 ETF 价格和份额 100% 对齐的交易日；最新交易日数据不完整时自动回退到最近完整交易日。",
-            "ETF 每日净申购金额优先按份额变动乘以同日单位净值计算；批量日度净值缺失时会按单只 ETF 回填窗口历史净值，仍缺失才用同日收盘价估算。",
-            "ETF 规模、净申购占比分母和成交均值占比分母优先使用单位净值口径，净值缺失时用收盘价估算；后台规模归因审计单独使用收盘价市值口径保持闭合。",
-            "当日和分天涨跌幅优先使用 fund_adj 复权因子计算，用于处理现金分红、份额分拆、合并和折算对收益序列的影响；ETF 净申购金额不使用复权价。",
-            "5日成交均值占比为近 5 个交易日逐日计算场内成交额 / 当日期初 ETF 规模后取均值，用于观察二级市场交易热度。",
-            "总览并列展示不同资金来源，不直接加总；宽基被动 ETF 排除增强、价值、成长、红利低波等策略变体；宽基、策略因子、A 股行业和港股行业均只展示聚合规模不低于 20 亿元的项目；A 股行业和港股行业只按跟踪指数归类，未匹配到标准指数规则的 ETF 不纳入行业聚合。",
-        ],
-    }
-    payload["ai_summary"] = capital_flow_ai_summary(payload, use_deepseek=False)
-    return payload
+    return window_payloads
+
+
+def capital_flow_notes() -> list[str]:
+    return [
+        "时间窗口按最近 N 个交易日统计，页面中的“日”均指 ETF 有效交易日；ETF 净申购金额为窗口内每日份额变动金额累加，北上/南下资金为窗口内每日净额累加。",
+        "ETF 每日净申购只使用目标权益 ETF 价格和份额 100% 对齐的交易日；最新交易日数据不完整时自动回退到最近完整交易日。",
+        "ETF 每日净申购金额优先按份额变动乘以同日单位净值计算；批量日度净值缺失时会按单只 ETF 回填窗口历史净值，仍缺失才用同日收盘价估算。",
+        "ETF 规模、净申购占比分母和成交均值占比分母优先使用单位净值口径，净值缺失时用收盘价估算；后台规模归因审计单独使用收盘价市值口径保持闭合。",
+        "当日和分天涨跌幅优先使用 fund_adj 复权因子计算，用于处理现金分红、份额分拆、合并和折算对收益序列的影响；ETF 净申购金额不使用复权价。",
+        "5日成交均值占比为近 5 个交易日逐日计算场内成交额 / 当日期初 ETF 规模后取均值，用于观察二级市场交易热度。",
+        "总览并列展示不同资金来源，不直接加总；宽基被动 ETF 排除增强、价值、成长、红利低波等策略变体；宽基、策略因子、A 股行业和港股行业均只展示聚合规模不低于 20 亿元的项目；A 股行业和港股行业只按跟踪指数归类，未匹配到标准指数规则的 ETF 不纳入行业聚合。",
+    ]
 
 
 def aligned_fund_dates(
