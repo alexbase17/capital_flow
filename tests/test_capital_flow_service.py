@@ -711,7 +711,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(row["net_flow_yi"], 11.9)
         self.assertEqual(row["start_scale_yi"], 34.2)
         self.assertEqual(row["turnover_yi"], 3.0)
-        self.assertEqual(row["turnover_ratio"], 4.39)
+        self.assertEqual(row["turnover_ratio"], 4.03)
         self.assertEqual(row["daily_net_flow"], [{"date": "2026-06-10", "value": 3.9}, {"date": "2026-06-11", "value": 8.0}])
         self.assertEqual(row["daily_change_pct"], [{"date": "2026-06-10", "value": 2.63}, {"date": "2026-06-11", "value": 2.56}])
         self.assertEqual(
@@ -721,6 +721,55 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 {"date": "2026-06-11", "value": 2.0, "start_scale_yi": 39.0},
             ],
         )
+        self.assertEqual(
+            row["scale_audit"],
+            {
+                "status": "ok",
+                "point_count": 2,
+                "scale_delta_yi": 13.8,
+                "net_flow_yi": 11.9,
+                "market_effect_yi": 1.9,
+                "residual_yi": 0.0,
+                "residual_ratio_pct": 0.0,
+            },
+        )
+        self.assertEqual(payload["quality"]["flow_price_status"], "estimated")
+        self.assertEqual(payload["quality"]["nav_estimate_ratio_pct"], 100.0)
+        self.assertEqual(payload["quality"]["scale_audit"]["status"], "ok")
+
+    def test_turnover_ratio_averages_daily_turnover_intensity(self):
+        funds = {
+            "510300.SH": {
+                "name": "沪深300ETF华泰柏瑞",
+                "benchmark": "沪深300指数收益率",
+                "invest_type": "被动指数型",
+            },
+        }
+        payload = _etf_flows_for_window(
+            funds,
+            ["20260611", "20260610", "20260609"],
+            2,
+            daily_prices={
+                "20260611": {"510300.SH": 10.0},
+                "20260610": {"510300.SH": 10.0},
+                "20260609": {"510300.SH": 10.0},
+            },
+            daily_navs={"20260611": {}, "20260610": {}},
+            daily_shares={
+                "20260611": {"510300.SH": 20000},
+                "20260610": {"510300.SH": 10000},
+                "20260609": {"510300.SH": 10000},
+            },
+            daily_amounts={
+                "20260611": {"510300.SH": 2.0},
+                "20260610": {"510300.SH": 1.0},
+            },
+        )
+
+        row = payload["sections"]["broad"]["rows"][0]
+        self.assertEqual(row["daily_turnover"][0]["start_scale_yi"], 10.0)
+        self.assertEqual(row["daily_turnover"][1]["start_scale_yi"], 10.0)
+        self.assertEqual(row["turnover_ratio"], 15.0)
 
     def test_etf_flow_ratio_uses_window_start_scale(self):
         funds = {

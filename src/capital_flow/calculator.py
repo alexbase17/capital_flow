@@ -37,6 +37,10 @@ class EtfFlowGroup:
     nav_count: int = 0
     close_estimate_count: int = 0
     skipped_flow_count: int = 0
+    scale_delta_yi: float = 0.0
+    audit_net_flow_yi: float = 0.0
+    market_effect_yi: float = 0.0
+    scale_audit_points: int = 0
     daily_net_flow_yi: dict[str, float] = field(default_factory=dict)
     daily_change_weight_yi: dict[str, float] = field(default_factory=dict)
     daily_change_weighted_sum: dict[str, float] = field(default_factory=dict)
@@ -187,6 +191,13 @@ def etf_flows_for_window(
             daily_flow_yi = (current_share - previous_share) * flow_price / 10000
             etf_net_flow_yi += daily_flow_yi
             group.daily_net_flow_yi[current_date] = group.daily_net_flow_yi.get(current_date, 0.0) + daily_flow_yi
+            if previous_price is not None and previous_price > 0:
+                scale_delta_yi = current_share * current_price / 10000 - previous_share * previous_price / 10000
+                market_effect_yi = previous_share * (current_price - previous_price) / 10000
+                group.scale_delta_yi += scale_delta_yi
+                group.audit_net_flow_yi += daily_flow_yi
+                group.market_effect_yi += market_effect_yi
+                group.scale_audit_points += 1
             if day_index == 0:
                 latest_flow_share = current_share
                 previous_flow_share = previous_share
@@ -270,6 +281,15 @@ def etf_flows_for_window(
                 sum(group.close_estimate_count for group in groups.values()),
             )
             or "--",
+            "flow_price_status": flow_price_status_from_counts(
+                sum(group.nav_count for group in groups.values()),
+                sum(group.close_estimate_count for group in groups.values()),
+            ),
+            "nav_estimate_ratio_pct": nav_estimate_ratio_pct(
+                sum(group.nav_count for group in groups.values()),
+                sum(group.close_estimate_count for group in groups.values()),
+            ),
+            "scale_audit": scale_audit_from_groups(groups.values()),
         },
         "sections": sections,
     }
@@ -307,7 +327,6 @@ def section_payload(
 def group_payload(group: EtfFlowGroup, *, window_days: int | None = None) -> dict[str, Any]:
     top_etfs = sorted(group.top_etfs, key=lambda item: item["scale_yi"], reverse=True)[:5]
     debug_etfs = sorted(group.top_etfs, key=lambda item: abs(item["net_flow_yi"]), reverse=True)[:10]
-    turnover_days = window_days or len(group.daily_turnover_yi)
     return {
         "index_name": group.index_name,
         "display_name": DISPLAY_INDEX_NAMES.get(group.index_name, group.index_name),
@@ -318,9 +337,7 @@ def group_payload(group: EtfFlowGroup, *, window_days: int | None = None) -> dic
         "net_flow_yi": round(group.net_flow_yi, 2),
         "net_flow_ratio": round(group.net_flow_yi / group.start_scale_yi * 100, 2) if group.start_scale_yi else None,
         "turnover_yi": round(sum(group.daily_turnover_yi.values()), 2),
-        "turnover_ratio": round(sum(group.daily_turnover_yi.values()) / turnover_days / group.start_scale_yi * 100, 2)
-        if group.daily_turnover_yi and group.start_scale_yi and turnover_days
-        else None,
+        "turnover_ratio": average_daily_turnover_ratio(group.daily_turnover_yi, group.daily_start_scale_yi),
         "scale_yi": round(group.scale_yi, 2),
         "start_scale_yi": round(group.start_scale_yi, 2),
         "etf_count": group.etf_count,
@@ -345,6 +362,13 @@ def group_payload(group: EtfFlowGroup, *, window_days: int | None = None) -> dic
             }
             for trade_date, value in sorted(group.daily_turnover_yi.items())
         ],
+        "scale_audit": scale_audit_payload(
+            scale_delta_yi=group.scale_delta_yi,
+            net_flow_yi=group.audit_net_flow_yi,
+            market_effect_yi=group.market_effect_yi,
+            start_scale_yi=group.start_scale_yi,
+            point_count=group.scale_audit_points,
+        ),
         "top_etfs": top_etfs,
         "debug_etfs": debug_etfs,
     }
@@ -362,6 +386,72 @@ def price_source_label_from_counts(nav_count: int, close_estimate_count: int) ->
     if nav_count > 0 and close_estimate_count > 0:
         return "混合口径"
     return None
+
+
+def flow_price_status_from_counts(nav_count: int, close_estimate_count: int) -> str:
+    if nav_count > 0 and close_estimate_count == 0:
+        return "final"
+    if nav_count == 0 and close_estimate_count > 0:
+        return "estimated"
+    if nav_count > 0 and close_estimate_count > 0:
+        return "mixed"
+    return "unavailable"
+
+
+def nav_estimate_ratio_pct(nav_count: int, close_estimate_count: int) -> float | None:
+    total = nav_count + close_estimate_count
+    if total <= 0:
+        return None
+    return round(close_estimate_count / total * 100, 2)
+
+
+def average_daily_turnover_ratio(
+    daily_turnover_yi: dict[str, float],
+    daily_start_scale_yi: dict[str, float],
+) -> float | None:
+    ratios = [
+        turnover_yi / start_scale_yi * 100
+        for trade_date, turnover_yi in daily_turnover_yi.items()
+        if (start_scale_yi := daily_start_scale_yi.get(trade_date, 0.0)) > 0 and turnover_yi >= 0
+    ]
+    if not ratios:
+        return None
+    return round(sum(ratios) / len(ratios), 2)
+
+
+def scale_audit_from_groups(groups: Any) -> dict[str, Any]:
+    group_list = list(groups)
+    return scale_audit_payload(
+        scale_delta_yi=sum(group.scale_delta_yi for group in group_list),
+        net_flow_yi=sum(group.audit_net_flow_yi for group in group_list),
+        market_effect_yi=sum(group.market_effect_yi for group in group_list),
+        start_scale_yi=sum(group.start_scale_yi for group in group_list),
+        point_count=sum(group.scale_audit_points for group in group_list),
+    )
+
+
+def scale_audit_payload(
+    *,
+    scale_delta_yi: float,
+    net_flow_yi: float,
+    market_effect_yi: float,
+    start_scale_yi: float,
+    point_count: int,
+) -> dict[str, Any]:
+    residual_yi = scale_delta_yi - net_flow_yi - market_effect_yi
+    residual_ratio_pct = residual_yi / start_scale_yi * 100 if start_scale_yi else None
+    status = "unavailable"
+    if point_count > 0:
+        status = "ok" if residual_ratio_pct is not None and abs(residual_ratio_pct) <= 0.5 else "review"
+    return {
+        "status": status,
+        "point_count": point_count,
+        "scale_delta_yi": round(scale_delta_yi, 2),
+        "net_flow_yi": round(net_flow_yi, 2),
+        "market_effect_yi": round(market_effect_yi, 2),
+        "residual_yi": round(residual_yi, 2),
+        "residual_ratio_pct": round(residual_ratio_pct, 2) if residual_ratio_pct is not None else None,
+    }
 
 
 def to_float(value: Any) -> float:

@@ -46,6 +46,7 @@ REQUIRED_ROW_KEYS = {
     "daily_net_flow",
     "daily_change_pct",
     "daily_turnover",
+    "scale_audit",
     "top_etfs",
     "debug_etfs",
 }

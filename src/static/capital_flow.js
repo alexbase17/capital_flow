@@ -51,10 +51,21 @@ function sectionValue(data, key, sectionKey) {
 
 function sectionTurnoverRatio(data, key, sectionKey) {
   const rows = sectionRows(data, key, sectionKey).filter(row => row.turnover_ratio !== null && row.turnover_ratio !== undefined);
-  const turnover = sumBy(rows, "turnover_yi");
+  const dailyTotals = new Map();
+  rows.forEach(row => {
+    (row.daily_turnover || []).forEach(point => {
+      const current = dailyTotals.get(point.date) || { turnover: 0, startScale: 0 };
+      current.turnover += Number(point.value || 0);
+      current.startScale += Number(point.start_scale_yi || 0);
+      dailyTotals.set(point.date, current);
+    });
+  });
+  const ratios = [...dailyTotals.values()]
+    .filter(point => point.startScale > 0)
+    .map(point => point.turnover / point.startScale * 100);
+  if (ratios.length) return ratios.reduce((total, value) => total + value, 0) / ratios.length;
   const startScale = sumBy(rows, "start_scale_yi");
-  const days = Number(windowPayload(data, key)?.days || 0);
-  return startScale && days ? turnover / days / startScale * 100 : null;
+  return startScale ? rows.reduce((total, row) => total + Number(row.turnover_ratio || 0) * Number(row.start_scale_yi || 0), 0) / startScale : null;
 }
 
 function renderTotalFlow(data) {
@@ -99,6 +110,7 @@ function renderDataStatus(data) {
   const el = document.getElementById("dataStatus");
   if (!el) return;
   const status = data?.data_status?.etf || data?.etf?.data_status;
+  const quality = data?.etf?.quality || {};
   if (!status) {
     el.textContent = "";
     el.className = "data-status";
@@ -108,7 +120,8 @@ function renderDataStatus(data) {
     `ETF数据日 ${status.as_of_date || "--"}`,
     `价格日 ${status.price_date || "--"}`,
     `份额日 ${status.share_date || "--"}`,
-    `净值日 ${status.nav_date || "收盘价估算"}`
+    `净值日 ${status.nav_date || "未发布"}`,
+    `净申购估值 ${quality.price_source_label || "--"}`
   ];
   if (status.status === "fallback") {
     parts.push("已回退到最近完整交易日");
@@ -140,6 +153,7 @@ function mergeRowsForSection(data, sectionKey) {
         change_pct: row.change_pct,
         net_flow_yi: row.net_flow_yi,
         net_flow_ratio: row.net_flow_ratio,
+        turnover_ratio: row.turnover_ratio,
         scale_yi: row.scale_yi,
         start_scale_yi: row.start_scale_yi,
         daily_net_flow: row.daily_net_flow || [],
@@ -258,13 +272,14 @@ function rollingTurnoverRatioPoints(points, windowSize = 5) {
   if (points.length < windowSize) return [];
   return points.slice(windowSize - 1).map((point, index) => {
     const windowPoints = points.slice(index, index + windowSize);
-    const value = windowPoints.reduce((total, item) => total + Number(item.value || 0), 0);
-    const startScale = Number(windowPoints[0]?.start_scale_yi || 0);
+    const ratios = windowPoints
+      .filter(item => Number(item.start_scale_yi || 0) > 0)
+      .map(item => Number(item.value || 0) / Number(item.start_scale_yi || 0) * 100);
     return {
       date: point.date,
       start_date: windowPoints[0]?.date || "",
       end_date: point.date,
-      value: startScale > 0 ? value / windowPoints.length / startScale * 100 : null
+      value: ratios.length ? ratios.reduce((total, value) => total + value, 0) / ratios.length : null
     };
   }).filter(point => point.value !== null);
 }
