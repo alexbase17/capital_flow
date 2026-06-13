@@ -2,17 +2,32 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
-from src.capital_flow.policy import (
-    HSGT_UNIT_TO_YI,
-    MIN_INDEX_SCALE_YI,
-    SPLIT_FACTORS,
-    SPLIT_PRICE_TOLERANCE,
-    SPLIT_SHARE_TOLERANCE,
+from src.capital_flow.formatting import fmt_date, to_float
+from src.capital_flow.grouping import (
+    EtfFlowGroup,
+    apply_daily_metrics_to_group,
+    apply_latest_metrics_to_group,
+    flow_price_status_from_counts,
+    nav_estimate_ratio_pct,
+    price_source_label_from_counts,
+    scale_audit_from_groups,
+    section_payload,
+    etf_top_item,
 )
-from src.tushare_client import TushareUnavailable
+from src.capital_flow.north_south import hsgt_item, north_south_flow_from_rows
+from src.capital_flow.policy import MIN_INDEX_SCALE_YI
+from src.capital_flow.price_math import (
+    change_pct_from_adjusted_close,
+    change_pct_from_close,
+    flow_price_for_etf,
+    previous_price_for_change,
+    previous_scale_price_for_scale,
+    scale_price_for_etf,
+    split_adjusted_flow_price,
+    split_factor_for_flow_adjustment,
+)
 from src.capital_flow.taxonomy import (
     classify_etf_group,
     index_code_for_group,
@@ -20,66 +35,8 @@ from src.capital_flow.taxonomy import (
     is_non_equity_invest_type,
     is_target_equity_etf,
 )
-from src.capital_flow.types import EtfDailyMetrics, EtfLatestMetrics, EtfStaticInfo, EtfTopItem
-
-
-DISPLAY_INDEX_NAMES = {
-    "非银金融": "证券保险/非银金融",
-    "电力": "公用事业/电力",
-    "家电": "家用电器",
-    "建材": "建筑材料",
-}
-
-
-@dataclass
-class EtfFlowGroup:
-    section: str
-    index_name: str
-    index_code: str = ""
-    net_flow_yi: float = 0.0
-    scale_yi: float = 0.0
-    start_scale_yi: float = 0.0
-    change_weight_yi: float = 0.0
-    change_weighted_sum: float = 0.0
-    etf_count: int = 0
-    nav_count: int = 0
-    close_estimate_count: int = 0
-    skipped_flow_count: int = 0
-    split_adjusted_count: int = 0
-    scale_delta_yi: float = 0.0
-    audit_net_flow_yi: float = 0.0
-    market_effect_yi: float = 0.0
-    audit_start_scale_yi: float = 0.0
-    scale_audit_points: int = 0
-    daily_net_flow_yi: dict[str, float] = field(default_factory=dict)
-    daily_change_weight_yi: dict[str, float] = field(default_factory=dict)
-    daily_change_weighted_sum: dict[str, float] = field(default_factory=dict)
-    daily_turnover_yi: dict[str, float] = field(default_factory=dict)
-    daily_start_scale_yi: dict[str, float] = field(default_factory=dict)
-    top_etfs: list[dict[str, Any]] = field(default_factory=list)
-
-
-def north_south_flow_from_rows(rows: list[dict[str, Any]], window_days: int) -> dict[str, Any]:
-    if len(rows) < window_days:
-        return {"latest_date": None, "previous_date": None, "rows": []}
-    window_rows = rows[:window_days]
-    return {
-        "latest_date": fmt_date(window_rows[0]["trade_date"]),
-        "previous_date": fmt_date(window_rows[-1]["trade_date"]),
-        "rows": [
-            hsgt_item("北上资金", window_rows, "north_money"),
-            hsgt_item("南下资金", window_rows, "south_money"),
-        ],
-    }
-
-
-def hsgt_item(name: str, rows: list[dict[str, Any]], field_name: str) -> dict[str, Any]:
-    total_value_yi = sum(to_float(row.get(field_name)) for row in rows) * HSGT_UNIT_TO_YI
-    return {
-        "name": name,
-        "latest_value_yi": round(total_value_yi, 2),
-        "net_change_yi": round(total_value_yi, 2),
-    }
+from src.capital_flow.types import EtfDailyMetrics, EtfLatestMetrics, EtfStaticInfo
+from src.tushare_client import TushareUnavailable
 
 
 def etf_static_info(code: str, fund: dict[str, Any]) -> EtfStaticInfo:
@@ -274,86 +231,6 @@ def daily_etf_metrics(
         comparable_previous_share=comparable_previous_share,
         split_adjusted=share_adjustment is not None,
     )
-
-
-def apply_latest_metrics_to_group(group: EtfFlowGroup, metrics: EtfLatestMetrics) -> None:
-    group.scale_yi += metrics.scale_yi
-    group.start_scale_yi += metrics.start_scale_yi
-    group.audit_start_scale_yi += metrics.audit_start_scale_yi
-    if metrics.change_pct is not None:
-        group.change_weight_yi += metrics.scale_yi
-        group.change_weighted_sum += metrics.change_pct * metrics.scale_yi
-    group.etf_count += 1
-
-
-def apply_daily_metrics_to_group(group: EtfFlowGroup, metrics: EtfDailyMetrics) -> None:
-    if metrics.daily_change_pct is not None and metrics.daily_scale_yi is not None:
-        group.daily_change_weight_yi[metrics.current_date] = (
-            group.daily_change_weight_yi.get(metrics.current_date, 0.0) + metrics.daily_scale_yi
-        )
-        group.daily_change_weighted_sum[metrics.current_date] = (
-            group.daily_change_weighted_sum.get(metrics.current_date, 0.0)
-            + metrics.daily_change_pct * metrics.daily_scale_yi
-        )
-    if metrics.current_amount_yi is not None and metrics.current_amount_yi > 0:
-        group.daily_turnover_yi[metrics.current_date] = (
-            group.daily_turnover_yi.get(metrics.current_date, 0.0) + metrics.current_amount_yi
-        )
-        if metrics.daily_start_scale_yi is not None:
-            group.daily_start_scale_yi[metrics.current_date] = (
-                group.daily_start_scale_yi.get(metrics.current_date, 0.0) + metrics.daily_start_scale_yi
-            )
-    if metrics.daily_flow_yi is None:
-        group.skipped_flow_count += 1
-        return
-    group.daily_net_flow_yi[metrics.current_date] = (
-        group.daily_net_flow_yi.get(metrics.current_date, 0.0) + metrics.daily_flow_yi
-    )
-    if metrics.split_adjusted:
-        group.split_adjusted_count += 1
-    if metrics.scale_delta_yi is not None and metrics.market_effect_yi is not None:
-        group.scale_delta_yi += metrics.scale_delta_yi
-        group.audit_net_flow_yi += metrics.daily_flow_yi
-        group.market_effect_yi += metrics.market_effect_yi
-        group.scale_audit_points += 1
-
-
-def etf_top_item(
-    *,
-    code: str,
-    name: str,
-    latest_metrics: EtfLatestMetrics,
-    net_flow_yi: float,
-    last_flow_price: float,
-    price_source: str,
-    price_source_label: str,
-    latest_flow_share: float | None,
-    previous_flow_share: float | None,
-    skipped_flow_count: int,
-    split_adjusted_count: int,
-) -> EtfTopItem:
-    return {
-        "code": code,
-        "name": name,
-        "scale_yi": round(latest_metrics.scale_yi, 2),
-        "start_scale_yi": round(latest_metrics.start_scale_yi, 2) if latest_metrics.start_scale_yi else None,
-        "net_flow_yi": round(net_flow_yi, 2),
-        "change_pct": round(latest_metrics.change_pct, 2) if latest_metrics.change_pct is not None else None,
-        "flow_price": round(last_flow_price, 4),
-        "price_source": price_source,
-        "price_source_label": price_source_label,
-        "latest_share_wan": round(latest_flow_share, 4) if latest_flow_share is not None else None,
-        "previous_share_wan": round(previous_flow_share, 4) if previous_flow_share is not None else None,
-        "share_change_wan": round(latest_flow_share - previous_flow_share, 4)
-        if latest_flow_share is not None and previous_flow_share is not None
-        else None,
-        "window_start_share_wan": round(previous_flow_share, 4) if previous_flow_share is not None else None,
-        "window_share_change_wan": round(latest_flow_share - previous_flow_share, 4)
-        if latest_flow_share is not None and previous_flow_share is not None
-        else None,
-        "skipped_flow_count": skipped_flow_count,
-        "split_adjusted_count": split_adjusted_count,
-    }
 
 
 def etf_flows_for_window(
@@ -582,296 +459,3 @@ def etf_flows_for_window(
         },
         "sections": sections,
     }
-
-
-def flow_price_for_etf(code: str, close: float, latest_navs: dict[str, float]) -> tuple[float, str, str]:
-    nav = latest_navs.get(code)
-    if nav is not None and nav > 0:
-        return nav, "nav", "净值口径"
-    return close, "close", "收盘价估算"
-
-
-def scale_price_for_etf(code: str, close: float | None, navs: dict[str, float]) -> float | None:
-    nav = navs.get(code)
-    if nav is not None and nav > 0:
-        return nav
-    return close if close is not None and close > 0 else None
-
-
-def previous_scale_price_for_scale(
-    *,
-    code: str,
-    previous_price: float | None,
-    previous_navs: dict[str, float],
-    comparable_previous_price: float | None,
-) -> float | None:
-    previous_scale_price = scale_price_for_etf(code, previous_price, previous_navs)
-    if previous_scale_price is None:
-        return comparable_previous_price
-    if (
-        comparable_previous_price is not None
-        and previous_price is not None
-        and previous_scale_price == previous_price
-        and not ratio_close(comparable_previous_price, previous_price, 0.000001)
-    ):
-        return comparable_previous_price
-    return previous_scale_price
-
-
-def split_factor_for_flow_adjustment(
-    *,
-    current_share: float | None,
-    previous_share: float | None,
-    current_price: float | None,
-    newer_price: float | None,
-) -> float | None:
-    if (
-        current_share is None
-        or previous_share is None
-        or current_price is None
-        or newer_price is None
-        or current_share <= 0
-        or previous_share <= 0
-        or current_price <= 0
-        or newer_price <= 0
-    ):
-        return None
-    share_ratio = current_share / previous_share
-    price_ratio = newer_price / current_price
-    for share_multiplier in share_adjustment_multipliers():
-        if ratio_close(share_ratio, share_multiplier, SPLIT_SHARE_TOLERANCE) and ratio_close(
-            price_ratio, 1 / share_multiplier, SPLIT_PRICE_TOLERANCE
-        ):
-            return share_multiplier
-    return None
-
-
-def previous_price_for_change(
-    *,
-    current_price: float | None,
-    previous_price: float | None,
-    previous_share: float | None,
-    older_share: float | None,
-) -> float | None:
-    if (
-        current_price is None
-        or previous_price is None
-        or previous_share is None
-        or older_share is None
-        or current_price <= 0
-        or previous_price <= 0
-        or previous_share <= 0
-        or older_share <= 0
-    ):
-        return previous_price
-    share_ratio = previous_share / older_share
-    price_ratio = current_price / previous_price
-    for share_multiplier in share_adjustment_multipliers():
-        if ratio_close(share_ratio, share_multiplier, SPLIT_SHARE_TOLERANCE) and ratio_close(
-            price_ratio, 1 / share_multiplier, SPLIT_PRICE_TOLERANCE
-        ):
-            return previous_price / share_multiplier
-    return previous_price
-
-
-def split_adjusted_flow_price(flow_price: float, current_price: float, share_adjustment: float | None) -> float:
-    if share_adjustment is None:
-        return flow_price
-    if flow_price > 0 and current_price > 0 and ratio_close(
-        flow_price / current_price, 1 / share_adjustment, SPLIT_PRICE_TOLERANCE
-    ):
-        return flow_price
-    return flow_price / share_adjustment
-
-
-def share_adjustment_multipliers() -> tuple[float, ...]:
-    return tuple(float(factor) for factor in SPLIT_FACTORS) + tuple(1 / factor for factor in SPLIT_FACTORS)
-
-
-def ratio_close(value: float, target: float, tolerance: float) -> bool:
-    return target > 0 and abs(value - target) / target <= tolerance
-
-
-def change_pct_from_adjusted_close(
-    close: float,
-    previous_close: float | None,
-    adj_factor: float | None,
-    previous_adj_factor: float | None,
-    *,
-    fallback_previous_close: float | None = None,
-) -> float | None:
-    if previous_close is None or previous_close <= 0:
-        return None
-    if adj_factor is not None and previous_adj_factor is not None and adj_factor > 0 and previous_adj_factor > 0:
-        adjusted_close = close * adj_factor
-        adjusted_previous_close = previous_close * previous_adj_factor
-        if adjusted_previous_close > 0:
-            return (adjusted_close - adjusted_previous_close) / adjusted_previous_close * 100
-    return change_pct_from_close(close, fallback_previous_close if fallback_previous_close is not None else previous_close)
-
-
-def change_pct_from_close(close: float, previous_close: float | None) -> float | None:
-    if previous_close is None or previous_close <= 0:
-        return None
-    return (close - previous_close) / previous_close * 100
-
-
-def section_payload(
-    groups: dict[tuple[str, str], EtfFlowGroup],
-    section: str,
-    title: str,
-    min_scale_yi: float | None,
-    window_days: int | None = None,
-) -> dict[str, Any]:
-    rows = [
-        group_payload(group, window_days=window_days)
-        for (group_section, _), group in groups.items()
-        if group_section == section and (min_scale_yi is None or group.scale_yi >= min_scale_yi)
-    ]
-    rows.sort(key=lambda item: abs(item["net_flow_yi"]), reverse=True)
-    return {"title": title, "rows": rows}
-
-
-def group_payload(group: EtfFlowGroup, *, window_days: int | None = None) -> dict[str, Any]:
-    top_etfs = sorted(group.top_etfs, key=lambda item: item["scale_yi"], reverse=True)[:5]
-    debug_etfs = sorted(group.top_etfs, key=lambda item: abs(item["net_flow_yi"]), reverse=True)[:10]
-    return {
-        "index_name": group.index_name,
-        "display_name": DISPLAY_INDEX_NAMES.get(group.index_name, group.index_name),
-        "index_code": group.index_code,
-        "change_pct": round(group.change_weighted_sum / group.change_weight_yi, 2)
-        if group.change_weight_yi > 0
-        else None,
-        "net_flow_yi": round(group.net_flow_yi, 2),
-        "net_flow_ratio": round(group.net_flow_yi / group.start_scale_yi * 100, 2) if group.start_scale_yi else None,
-        "turnover_yi": round(sum(group.daily_turnover_yi.values()), 2),
-        "turnover_ratio": average_daily_turnover_ratio(group.daily_turnover_yi, group.daily_start_scale_yi),
-        "scale_yi": round(group.scale_yi, 2),
-        "start_scale_yi": round(group.start_scale_yi, 2),
-        "etf_count": group.etf_count,
-        "nav_count": group.nav_count,
-        "close_estimate_count": group.close_estimate_count,
-        "skipped_flow_count": group.skipped_flow_count,
-        "split_adjusted_count": group.split_adjusted_count,
-        "price_source_label": group_price_source_label(group),
-        "daily_net_flow": [
-            {"date": fmt_date(trade_date), "value": round(value, 2)}
-            for trade_date, value in sorted(group.daily_net_flow_yi.items())
-        ],
-        "daily_change_pct": [
-            {"date": fmt_date(trade_date), "value": round(group.daily_change_weighted_sum[trade_date] / weight, 2)}
-            for trade_date, weight in sorted(group.daily_change_weight_yi.items())
-            if weight > 0
-        ],
-        "daily_turnover": [
-            {
-                "date": fmt_date(trade_date),
-                "value": round(value, 2),
-                "start_scale_yi": round(group.daily_start_scale_yi.get(trade_date, 0.0), 2),
-            }
-            for trade_date, value in sorted(group.daily_turnover_yi.items())
-        ],
-        "scale_audit": scale_audit_payload(
-            scale_delta_yi=group.scale_delta_yi,
-            net_flow_yi=group.audit_net_flow_yi,
-            market_effect_yi=group.market_effect_yi,
-            start_scale_yi=group.audit_start_scale_yi,
-            point_count=group.scale_audit_points,
-        ),
-        "top_etfs": top_etfs,
-        "debug_etfs": debug_etfs,
-    }
-
-
-def group_price_source_label(group: EtfFlowGroup) -> str:
-    return price_source_label_from_counts(group.nav_count, group.close_estimate_count) or "--"
-
-
-def price_source_label_from_counts(nav_count: int, close_estimate_count: int) -> str | None:
-    if nav_count > 0 and close_estimate_count == 0:
-        return "净值口径"
-    if nav_count == 0 and close_estimate_count > 0:
-        return "收盘价估算"
-    if nav_count > 0 and close_estimate_count > 0:
-        return "混合口径"
-    return None
-
-
-def flow_price_status_from_counts(nav_count: int, close_estimate_count: int) -> str:
-    if nav_count > 0 and close_estimate_count == 0:
-        return "final"
-    if nav_count == 0 and close_estimate_count > 0:
-        return "estimated"
-    if nav_count > 0 and close_estimate_count > 0:
-        return "mixed"
-    return "unavailable"
-
-
-def nav_estimate_ratio_pct(nav_count: int, close_estimate_count: int) -> float | None:
-    total = nav_count + close_estimate_count
-    if total <= 0:
-        return None
-    return round(close_estimate_count / total * 100, 2)
-
-
-def average_daily_turnover_ratio(
-    daily_turnover_yi: dict[str, float],
-    daily_start_scale_yi: dict[str, float],
-) -> float | None:
-    ratios = [
-        turnover_yi / start_scale_yi * 100
-        for trade_date, turnover_yi in daily_turnover_yi.items()
-        if (start_scale_yi := daily_start_scale_yi.get(trade_date, 0.0)) > 0 and turnover_yi >= 0
-    ]
-    if not ratios:
-        return None
-    return round(sum(ratios) / len(ratios), 2)
-
-
-def scale_audit_from_groups(groups: Any) -> dict[str, Any]:
-    group_list = list(groups)
-    return scale_audit_payload(
-        scale_delta_yi=sum(group.scale_delta_yi for group in group_list),
-        net_flow_yi=sum(group.audit_net_flow_yi for group in group_list),
-        market_effect_yi=sum(group.market_effect_yi for group in group_list),
-        start_scale_yi=sum(group.audit_start_scale_yi for group in group_list),
-        point_count=sum(group.scale_audit_points for group in group_list),
-    )
-
-
-def scale_audit_payload(
-    *,
-    scale_delta_yi: float,
-    net_flow_yi: float,
-    market_effect_yi: float,
-    start_scale_yi: float,
-    point_count: int,
-) -> dict[str, Any]:
-    residual_yi = scale_delta_yi - net_flow_yi - market_effect_yi
-    residual_ratio_pct = residual_yi / start_scale_yi * 100 if start_scale_yi else None
-    status = "unavailable"
-    if point_count > 0:
-        status = "ok" if residual_ratio_pct is not None and abs(residual_ratio_pct) <= 0.5 else "review"
-    return {
-        "status": status,
-        "point_count": point_count,
-        "scale_delta_yi": round(scale_delta_yi, 2),
-        "net_flow_yi": round(net_flow_yi, 2),
-        "market_effect_yi": round(market_effect_yi, 2),
-        "residual_yi": round(residual_yi, 2),
-        "residual_ratio_pct": round(residual_ratio_pct, 2) if residual_ratio_pct is not None else None,
-    }
-
-
-def to_float(value: Any) -> float:
-    try:
-        return float(value or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def fmt_date(value: Any) -> str:
-    text = str(value or "")
-    if len(text) == 8 and text.isdigit():
-        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
-    return text

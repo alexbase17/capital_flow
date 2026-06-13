@@ -20,7 +20,7 @@
   -> GET /
   -> src/capital_flow/routes.py
   -> src/templates/capital_flow.html
-  -> src/static/capital_flow.js
+  -> src/static/capital_flow*.js
   -> GET /api/capital-flow
   -> src/capital_flow/service.py
   -> src/capital_flow/fetcher.py
@@ -47,7 +47,11 @@
 | `src/capital_flow/fetcher.py` | 按接口封装 TuShare 数据读取 |
 | `src/capital_flow/policy.py` | 统一维护窗口、规模阈值、缓存 TTL、份额拆分识别容差等口径参数 |
 | `src/capital_flow/types.py` | 计算层共享的 TypedDict/dataclass 数据结构 |
-| `src/capital_flow/calculator.py` | 北上/南下资金、ETF 净申购、规模、涨跌幅、成交均值占比计算；ETF 主循环拆分为静态信息、最新日指标、日度指标、聚合累加和 payload 组装 |
+| `src/capital_flow/calculator.py` | ETF 净申购、规模、涨跌幅、成交均值占比的窗口主流程 |
+| `src/capital_flow/grouping.py` | ETF 分组聚合、top/debug ETF 明细、规模归因审计和行 payload 组装 |
+| `src/capital_flow/price_math.py` | ETF NAV/收盘价取价、复权涨跌幅、份额拆分/折算识别和可比价格计算 |
+| `src/capital_flow/north_south.py` | 北上/南下资金窗口聚合 |
+| `src/capital_flow/formatting.py` | 日期格式和安全数值转换 |
 | `src/capital_flow/taxonomy_data.json` | ETF 精确指数分类主数据，记录 market、asset_class、taxonomy_type、parent_bucket 等后台字段 |
 | `src/capital_flow/taxonomy.py` | ETF 分类归一化、优先级、主数据读取和关键词兜底 |
 | `src/capital_flow/taxonomy_audit.py` | ETF 分类覆盖率、分类来源、置信度和未分类样本审计 |
@@ -59,7 +63,12 @@
 | 文件 | 职责 |
 |---|---|
 | `src/templates/capital_flow.html` | 首页模板和基础 DOM 容器 |
-| `src/static/capital_flow.js` | API 请求、总览矩阵、表格渲染、排序、展开曲线 |
+| `src/static/capital_flow_state.js` | 前端窗口、分区和排序状态常量 |
+| `src/static/capital_flow_format.js` | 金额/比例格式化、HTML escape 和通用样式判定 |
+| `src/static/capital_flow_data.js` | API payload 读取、窗口数据合并和总览聚合 |
+| `src/static/capital_flow_charts.js` | 展开走势图、滑动窗口和悬停提示 |
+| `src/static/capital_flow_table.js` | 表格排序、展开行、名称 tooltip 和 sticky 表头滚动 |
+| `src/static/capital_flow.js` | 页面入口、API 请求、AI 摘要加载、导航同步和整体渲染编排 |
 | `src/static/capital_flow.css` | 页面布局、表格、颜色和响应式样式 |
 
 前端不直接保存用户配置，也不写入后端数据。刷新页面或调用 API 会读取后端进程内缓存、本地 TuShare 原始数据缓存或 TuShare 远端数据。
@@ -173,4 +182,4 @@ scripts/verify_all.sh
 - 修改 API 字段时，必须同步 `schema.py` 和前端渲染逻辑。
 - 修改分类规则时，优先在 `taxonomy_data.json` 增加明确的跟踪指数映射；不要仅凭基金简称做高风险主观归类。修改后运行 `scripts/audit_etf_taxonomy.py`，确认精确映射、关键词兜底和未分类样本变化符合预期。
 - 修改 A 股行业/主题边界时，先运行 `scripts/audit_etf_taxonomy.py --with-sw-exposure` 做申万 2021 成分暴露复核；只有暴露结果稳定、指数代码唯一且样本合理时，才更新前台分类主数据。
-- 修改页面布局时，至少运行 `node --check src/static/capital_flow.js` 和完整 `scripts/verify_all.sh`。
+- 修改页面布局时，至少运行 `for script in src/static/capital_flow*.js; do node --check "$script"; done` 和完整 `scripts/verify_all.sh`。

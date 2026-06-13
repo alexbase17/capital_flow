@@ -169,7 +169,7 @@ scripts/verify_all.sh
 `verify_fast.sh` 包含：
 
 - Python 单元测试。
-- `node --check src/static/capital_flow.js`。
+- `node --check src/static/capital_flow*.js`，覆盖资金流前端全部 JS 模块。
 - Git whitespace 检查。
 
 `verify_all.sh` 额外包含 Python 编译检查。

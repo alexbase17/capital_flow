@@ -8,6 +8,8 @@
 - 新生成的资金流 payload 增加 `payload_schema_version`，用于后续排查磁盘缓存是否为旧结构；旧缓存仍允许作为兜底读取，避免首次重算过慢导致页面空白。
 - 优化 ETF 分类覆盖率口径：API 覆盖率改为“已分类前台目标 / 前台可聚合目标”，新增 `frontend_target_equity_etf_count`、`non_frontend_target_equity_etf_count` 和 `raw_target_coverage_pct`，指数增强等非前台目标不再混入真正未分类缺口。审计脚本同步输出 `non_frontend_target_samples`。
 - 补充一批高确定性 ETF 精确分类主数据，包括创业板200、创业板综、深证主板50、A100、MSCI中国A50、民企、国企改革、港股国企、ESG、央企科创、信息安全、稀有金属、农牧等；期货型 ETF 按非权益目标排除。分类审计显示前台可聚合覆盖率提升至 83.59%，精确映射提升至 854，关键词兜底降至 231。
+- 做一轮行为不变的可维护性拆分：`calculator.py` 收缩为 ETF 窗口主流程，分组/审计迁入 `grouping.py`，价格/拆分计算迁入 `price_math.py`，北上南下和格式化分别迁入 `north_south.py`、`formatting.py`。原 1541 行 `test_capital_flow_service.py` 拆为 service、taxonomy、calculator 三个测试文件。
+- 新增 `scripts/validate_taxonomy_data.py` 校验 ETF 分类主数据，检查 JSON 结构、重复 benchmark、字段合法性，并可附带当前分类覆盖率审计。前端 JS 拆为 state、format、data、charts、table、入口六个模块，验证脚本改为检查全部 `capital_flow*.js`。
 
 ## 2026-06-13
 

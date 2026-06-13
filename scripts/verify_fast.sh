@@ -11,7 +11,9 @@ echo "== Python unit tests =="
 "$PYTHON_BIN" -W error::ResourceWarning -m unittest discover -s tests
 
 echo "== JavaScript syntax check =="
-node --check src/static/capital_flow.js
+for script in src/static/capital_flow*.js; do
+  node --check "$script"
+done
 
 echo "== Git whitespace check =="
 git diff --check

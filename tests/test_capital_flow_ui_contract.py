@@ -30,6 +30,11 @@ class CapitalFlowUiContractTests(unittest.TestCase):
         self.assertNotIn('<div class="nav">', html)
         self.assertNotIn('<a href="/" class="active">资金流向</a>', html)
         self.assertRegex(html, r'/static/capital_flow\.css\?v=\d{8}-\d+')
+        self.assertRegex(html, r'/static/capital_flow_state\.js\?v=\d{8}-\d+')
+        self.assertRegex(html, r'/static/capital_flow_format\.js\?v=\d{8}-\d+')
+        self.assertRegex(html, r'/static/capital_flow_data\.js\?v=\d{8}-\d+')
+        self.assertRegex(html, r'/static/capital_flow_charts\.js\?v=\d{8}-\d+')
+        self.assertRegex(html, r'/static/capital_flow_table\.js\?v=\d{8}-\d+')
         self.assertRegex(html, r'/static/capital_flow\.js\?v=\d{8}-\d+')
         self.assertNotIn("<style>", html)
         self.assertNotIn("onclick=", html)
@@ -146,7 +151,17 @@ class CapitalFlowUiContractTests(unittest.TestCase):
 
     def test_capital_flow_static_scripts_render_expected_sections(self):
         html = (ROOT_DIR / "src" / "templates" / "capital_flow.html").read_text(encoding="utf-8")
-        script = self.static_text("capital_flow.js")
+        script = "\n".join(
+            self.static_text(filename)
+            for filename in (
+                "capital_flow_state.js",
+                "capital_flow_format.js",
+                "capital_flow_data.js",
+                "capital_flow_charts.js",
+                "capital_flow_table.js",
+                "capital_flow.js",
+            )
+        )
         css = self.static_text("capital_flow.css")
 
         self.assertIn('"/api/capital-flow"', script)
