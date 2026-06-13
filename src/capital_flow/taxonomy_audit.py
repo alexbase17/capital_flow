@@ -7,6 +7,8 @@ from typing import Any
 
 from src.capital_flow.taxonomy import (
     classify_etf_detail,
+    is_frontend_target_equity_etf,
+    is_non_equity_invest_type,
     is_target_equity_etf,
     normalize_benchmark,
 )
@@ -20,6 +22,7 @@ def audit_fund_taxonomy(funds: dict[str, dict[str, Any]], *, sample_limit: int =
     by_taxonomy_type: Counter[str] = Counter()
     by_parent_bucket: Counter[str] = Counter()
     unclassified: list[dict[str, str]] = []
+    non_frontend_target: list[dict[str, str]] = []
     pattern_classified: list[dict[str, str]] = []
 
     for code, fund in sorted(funds.items()):
@@ -31,11 +34,27 @@ def audit_fund_taxonomy(funds: dict[str, dict[str, Any]], *, sample_limit: int =
         normalized_benchmark = normalize_benchmark(benchmark)
         counters["total_etf"] += 1
 
+        if is_non_equity_invest_type(invest_type):
+            counters["excluded_non_target"] += 1
+            continue
         if not is_target_equity_etf(name, benchmark):
             counters["excluded_non_target"] += 1
             continue
 
         counters["target_equity_etf"] += 1
+        if not is_frontend_target_equity_etf(name, benchmark, invest_type):
+            counters["non_frontend_target_equity"] += 1
+            append_sample(
+                non_frontend_target,
+                sample_limit,
+                code=code,
+                name=name,
+                benchmark=normalized_benchmark,
+                invest_type=invest_type,
+            )
+            continue
+
+        counters["frontend_target_equity_etf"] += 1
         result = classify_etf_detail(name, benchmark=benchmark, invest_type=invest_type)
         if result is None:
             counters["unclassified_target_equity"] += 1
@@ -70,13 +89,20 @@ def audit_fund_taxonomy(funds: dict[str, dict[str, Any]], *, sample_limit: int =
             )
 
     coverage_pct = 0.0
+    raw_coverage_pct = 0.0
+    if counters["frontend_target_equity_etf"]:
+        coverage_pct = round(
+            counters["classified_target_equity"] / counters["frontend_target_equity_etf"] * 100,
+            2,
+        )
     if counters["target_equity_etf"]:
-        coverage_pct = round(counters["classified_target_equity"] / counters["target_equity_etf"] * 100, 2)
+        raw_coverage_pct = round(counters["classified_target_equity"] / counters["target_equity_etf"] * 100, 2)
 
     return {
         "summary": {
             **dict(counters),
             "coverage_pct": coverage_pct,
+            "raw_coverage_pct": raw_coverage_pct,
         },
         "by_section": dict(sorted(by_section.items())),
         "by_source": dict(sorted(by_source.items())),
@@ -84,6 +110,7 @@ def audit_fund_taxonomy(funds: dict[str, dict[str, Any]], *, sample_limit: int =
         "by_taxonomy_type": dict(sorted(by_taxonomy_type.items())),
         "by_parent_bucket": dict(sorted(by_parent_bucket.items())),
         "unclassified_samples": unclassified,
+        "non_frontend_target_samples": non_frontend_target,
         "pattern_classified_samples": pattern_classified,
     }
 

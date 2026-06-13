@@ -39,6 +39,7 @@ from src.capital_flow.taxonomy import is_target_equity_etf
 
 
 _CACHE: dict[str, Any] = {"payloads": {}}
+CAPITAL_FLOW_PAYLOAD_SCHEMA_VERSION = "2026-06-14.1"
 
 
 def capital_flow_payload(
@@ -89,13 +90,20 @@ def write_payload_cache(window_key: str, payload: dict[str, Any]) -> None:
 
 
 def mark_payload_cache_fallback(payload: dict[str, Any], error: str) -> dict[str, Any]:
-    data_status = payload.setdefault("data_status", {}).setdefault("etf", {})
-    data_status["payload_cache_status"] = "stale"
-    data_status["payload_cache_error"] = error
+    mark_etf_status_stale(payload.setdefault("data_status", {}).setdefault("etf", {}), error)
+    mark_etf_status_stale(payload.setdefault("etf", {}).setdefault("data_status", {}), error)
+    for window_payload in payload.get("window_payloads", {}).values():
+        if isinstance(window_payload, dict):
+            mark_etf_status_stale(window_payload.setdefault("etf", {}).setdefault("data_status", {}), error)
     notes = payload.setdefault("notes", [])
     if isinstance(notes, list):
         notes.insert(0, "本次外部数据刷新失败，页面暂用上次成功生成的资金流 payload。")
     return payload
+
+
+def mark_etf_status_stale(data_status: dict[str, Any], error: str) -> None:
+    data_status["payload_cache_status"] = "stale"
+    data_status["payload_cache_error"] = error
 
 
 def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[str, str, int]) -> dict[str, Any]:
@@ -187,6 +195,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
         }
     selected_payload = window_payloads[key]
     payload = {
+        "payload_schema_version": CAPITAL_FLOW_PAYLOAD_SCHEMA_VERSION,
         "data_status": {
             "etf": selected_payload["etf"]["data_status"],
             "north_south": north_south_data_status(hsgt_rows),

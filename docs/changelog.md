@@ -1,5 +1,14 @@
 # 变更记录
 
+## 2026-06-14
+
+- 加固资金流向缓存兜底状态：当主数据刷新失败或服务 warm start 使用上次成功 payload 时，`payload_cache_status=stale` 和错误原因会同步写入顶层、当前窗口和全部 `window_payloads` 的 ETF `data_status`，避免后台审计或 AI 摘要误以为所有窗口都是新鲜计算结果。
+- AI 摘要输入新增 `quality.payload_cache_status` / `payload_cache_error`，并更新 DeepSeek prompt：缓存兜底数据只能按“上次成功数据”解读，不能表述为本次已成功刷新的最新结果。
+- 修正 ETF 明细排错字段的多日窗口口径：`top_etfs/debug_etfs` 中 `previous_share_wan`、`share_change_wan` 现在使用窗口期初可比份额，并新增 `window_start_share_wan`、`window_share_change_wan`，避免排查长窗口异常时误读为最新相邻两日份额差。
+- 新生成的资金流 payload 增加 `payload_schema_version`，用于后续排查磁盘缓存是否为旧结构；旧缓存仍允许作为兜底读取，避免首次重算过慢导致页面空白。
+- 优化 ETF 分类覆盖率口径：API 覆盖率改为“已分类前台目标 / 前台可聚合目标”，新增 `frontend_target_equity_etf_count`、`non_frontend_target_equity_etf_count` 和 `raw_target_coverage_pct`，指数增强等非前台目标不再混入真正未分类缺口。审计脚本同步输出 `non_frontend_target_samples`。
+- 补充一批高确定性 ETF 精确分类主数据，包括创业板200、创业板综、深证主板50、A100、MSCI中国A50、民企、国企改革、港股国企、ESG、央企科创、信息安全、稀有金属、农牧等；期货型 ETF 按非权益目标排除。分类审计显示前台可聚合覆盖率提升至 83.59%，精确映射提升至 854，关键词兜底降至 231。
+
 ## 2026-06-13
 
 - 优化本地验证和启动链路：新增 `scripts/lib_env.sh` 统一管理 `.venv`、requirements hash 和 pycache 路径；`start_web.sh`、`verify_all.sh` 复用同一环境逻辑，默认虚拟环境损坏时自动重建，依赖未变化时跳过 `pip install`。新增 `verify_fast.sh`、`check_web.sh`、`restart_web.sh`，降低日常测试、接口探活和服务重启成本。

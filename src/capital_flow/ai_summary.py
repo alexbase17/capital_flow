@@ -16,7 +16,7 @@ from src.http_client import request_json
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_DEEPSEEK_TIMEOUT_SECONDS = 30
-AI_SUMMARY_PROMPT_VERSION = "2026-06-13.3"
+AI_SUMMARY_PROMPT_VERSION = "2026-06-14.1"
 WINDOW_KEYS = ("1d", "5d", "20d", "60d")
 SECTION_LABELS = {
     "broad": "宽基",
@@ -168,6 +168,8 @@ def request_deepseek_summary(
                             "后续最应该观察什么变化。如果多个信号属于同一条资金主线，优先合并表达，"
                             "不要拆成多条重复关注点。若没有足够强的信号，请明确说信号偏弱。"
                             "硬约束：只能基于 data 提供的数据，不编造外部信息，不给买卖建议，不预测收益，"
+                            "若 data.quality.payload_cache_status 为 stale，只能说明基于上次成功缓存数据，"
+                            "不得表述为本次已成功刷新后的最新结果。"
                             "不要写确定性结论。必须严格遵守 data.metric_notes 的字段口径：只有同一窗口的数据"
                             "才能表述为同期、背离或共振，例如 flow_60d_yi 只能和 change_60d_pct、"
                             "turnover_60d_avg_pct 做同期比较；不得用最新1日涨跌幅解释20日或60日资金。"
@@ -499,6 +501,8 @@ def compact_quality(payload: dict[str, Any]) -> dict[str, Any]:
         "share_date": data_status.get("share_date"),
         "nav_date": data_status.get("nav_date"),
         "required_etf_count": data_status.get("required_etf_count"),
+        "payload_cache_status": data_status.get("payload_cache_status"),
+        "payload_cache_error": data_status.get("payload_cache_error"),
         "nav_backfilled_count": data_status.get("nav_backfilled_count"),
         "nav_estimate_ratio_pct": quality.get("nav_estimate_ratio_pct"),
         "skipped_flow_count": quality.get("skipped_flow_count"),

@@ -141,6 +141,7 @@ class CapitalFlowAiSummaryTests(unittest.TestCase):
         self.assertEqual(summary_input["as_of_date"], "2026-06-12")
         self.assertEqual(summary_input["quality"]["scale_audit"]["status"], "ok")
         self.assertIn("same_window_rule", summary_input["metric_notes"])
+        self.assertIsNone(summary_input["quality"]["payload_cache_status"])
         self.assertEqual(summary_input["signals"][0]["name"], "通信")
         self.assertIn("连续流入", summary_input["signals"][0]["tags"])
         self.assertEqual(summary_input["signals"][0]["flow_60d_yi"], 120.0)
@@ -163,6 +164,19 @@ class CapitalFlowAiSummaryTests(unittest.TestCase):
 
         self.assertEqual(summary_input["quality"]["nav_estimate_ratio_pct"], 0.0)
         self.assertEqual(summary_input["quality"]["skipped_flow_count"], 3)
+
+    def test_build_ai_summary_input_includes_stale_payload_status(self):
+        payload = sample_payload()
+        payload["window_payloads"]["60d"]["etf"]["data_status"] = {
+            **payload["etf"]["data_status"],
+            "payload_cache_status": "stale",
+            "payload_cache_error": "service warm start",
+        }
+
+        summary_input = build_ai_summary_input(payload)
+
+        self.assertEqual(summary_input["quality"]["payload_cache_status"], "stale")
+        self.assertEqual(summary_input["quality"]["payload_cache_error"], "service warm start")
 
     def test_rule_based_summary_is_display_ready(self):
         summary = rule_based_summary(build_ai_summary_input(sample_payload()))
@@ -363,6 +377,7 @@ class CapitalFlowAiSummaryTests(unittest.TestCase):
         self.assertIn("金额、净申购占比、涨跌幅、成交均值占比中任一指标显著异常", sent_payload["messages"][1]["content"])
         self.assertIn("如果多个信号属于同一条资金主线，优先合并表达", sent_payload["messages"][1]["content"])
         self.assertIn("硬约束", sent_payload["messages"][1]["content"])
+        self.assertIn("payload_cache_status 为 stale", sent_payload["messages"][1]["content"])
         self.assertIn("按辅助决策价值从高到低排序，最多输出5个关注点", sent_payload["messages"][1]["content"])
         self.assertIn("不得用最新1日涨跌幅解释20日或60日资金", sent_payload["messages"][1]["content"])
         self.assertIn("二级市场用成交均值占比", sent_payload["messages"][1]["content"])

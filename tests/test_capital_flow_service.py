@@ -350,7 +350,10 @@ class CapitalFlowServiceTests(unittest.TestCase):
             result = service.capital_flow_payload(force_refresh=True, client=object(), window_key="5d")
 
         self.assertEqual(result["data_status"]["etf"]["payload_cache_status"], "stale")
+        self.assertEqual(result["etf"]["data_status"]["payload_cache_status"], "stale")
+        self.assertEqual(result["window_payloads"]["5d"]["etf"]["data_status"]["payload_cache_status"], "stale")
         self.assertIn("fund_nav rate limit", result["data_status"]["etf"]["payload_cache_error"])
+        self.assertIn("fund_nav rate limit", result["window_payloads"]["5d"]["etf"]["data_status"]["payload_cache_error"])
         self.assertIn("上次成功生成", result["notes"][0])
 
     def test_capital_flow_payload_uses_recent_disk_payload_on_warm_start(self):
@@ -367,6 +370,8 @@ class CapitalFlowServiceTests(unittest.TestCase):
 
         build_payload.assert_not_called()
         self.assertEqual(result["data_status"]["etf"]["payload_cache_status"], "stale")
+        self.assertEqual(result["etf"]["data_status"]["payload_cache_status"], "stale")
+        self.assertEqual(result["window_payloads"]["5d"]["etf"]["data_status"]["payload_cache_status"], "stale")
         self.assertEqual(result["data_status"]["etf"]["payload_cache_error"], "service warm start")
 
     def test_classifies_broad_a_share_etfs(self):
@@ -501,11 +506,13 @@ class CapitalFlowServiceTests(unittest.TestCase):
             ),
             ("strategy", "红利低波"),
         )
-        self.assertIsNone(
-            classify_etf_group("创业板综ETF银华", benchmark="创业板综合指数收益率", invest_type="被动指数型")
+        self.assertEqual(
+            classify_etf_group("创业板综ETF银华", benchmark="创业板综合指数收益率", invest_type="被动指数型"),
+            ("broad", "创业板综"),
         )
-        self.assertIsNone(
-            classify_etf_group("创业板200ETF南方", benchmark="创业板中盘200指数收益率", invest_type="被动指数型")
+        self.assertEqual(
+            classify_etf_group("创业板200ETF南方", benchmark="创业板中盘200指数收益率", invest_type="被动指数型"),
+            ("broad", "创业板200"),
         )
         self.assertIsNone(
             classify_etf_group("创业板科技ETF华泰柏瑞", benchmark="创业板科技指数收益率", invest_type="被动指数型")
@@ -513,8 +520,9 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertIsNone(
             classify_etf_group("创业板大盘ETF招商", benchmark="创业板大盘指数收益率", invest_type="被动指数型")
         )
-        self.assertIsNone(
-            classify_etf_group("中国A50ETF南方", benchmark="MSCI中国A50互联互通指数(人民币)收益率", invest_type="被动指数型")
+        self.assertEqual(
+            classify_etf_group("中国A50ETF南方", benchmark="MSCI中国A50互联互通指数(人民币)收益率", invest_type="被动指数型"),
+            ("broad", "MSCI中国A50"),
         )
         self.assertIsNone(
             classify_etf_group("双创50增强ETF广发", benchmark="中证科创创业50指数收益率", invest_type="增强指数型"),
@@ -645,6 +653,11 @@ class CapitalFlowServiceTests(unittest.TestCase):
                     "benchmark": "未知主题指数收益率",
                     "invest_type": "被动指数型",
                 },
+                "159238.SZ": {
+                    "name": "沪深300增强ETF景顺",
+                    "benchmark": "沪深300指数收益率",
+                    "invest_type": "增强指数型",
+                },
                 "511880.SH": {
                     "name": "货币ETF样本",
                     "benchmark": "中证货币基金指数收益率",
@@ -653,16 +666,21 @@ class CapitalFlowServiceTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(audit["summary"]["total_etf"], 4)
+        self.assertEqual(audit["summary"]["total_etf"], 5)
         self.assertEqual(audit["summary"]["excluded_non_target"], 1)
-        self.assertEqual(audit["summary"]["target_equity_etf"], 3)
+        self.assertEqual(audit["summary"]["target_equity_etf"], 4)
+        self.assertEqual(audit["summary"]["frontend_target_equity_etf"], 3)
+        self.assertEqual(audit["summary"]["non_frontend_target_equity"], 1)
         self.assertEqual(audit["summary"]["classified_target_equity"], 2)
         self.assertEqual(audit["summary"]["unclassified_target_equity"], 1)
+        self.assertEqual(audit["summary"]["coverage_pct"], 66.67)
+        self.assertEqual(audit["summary"]["raw_coverage_pct"], 50.0)
         self.assertEqual(audit["by_source"], {"benchmark_exact": 1, "benchmark_pattern": 1})
         self.assertEqual(audit["by_confidence"], {"high": 1, "medium": 1})
         self.assertEqual(audit["by_taxonomy_type"], {"theme": 1})
         self.assertEqual(audit["by_parent_bucket"], {"科技": 1})
         self.assertEqual(audit["unclassified_samples"][0]["code"], "159999.SZ")
+        self.assertEqual(audit["non_frontend_target_samples"][0]["code"], "159238.SZ")
         self.assertEqual(audit["pattern_classified_samples"][0]["label"], "机器人")
 
     def test_sw2021_exposure_aggregates_latest_index_weights(self):
@@ -964,14 +982,60 @@ class CapitalFlowServiceTests(unittest.TestCase):
 
         self.assertEqual(payload["coverage"]["priced_etf_count"], 3)
         self.assertEqual(payload["coverage"]["target_equity_etf_count"], 2)
+        self.assertEqual(payload["coverage"]["frontend_target_equity_etf_count"], 2)
+        self.assertEqual(payload["coverage"]["non_frontend_target_equity_etf_count"], 0)
         self.assertEqual(payload["coverage"]["classified_target_equity_etf_count"], 1)
         self.assertEqual(payload["coverage"]["excluded_non_target_etf_count"], 1)
+        self.assertEqual(payload["coverage"]["raw_target_coverage_pct"], 50.0)
         self.assertEqual(payload["coverage"]["target_coverage_pct"], 50.0)
         self.assertEqual(payload["quality"]["nav_count"], 0)
         self.assertEqual(payload["quality"]["close_estimate_count"], 1)
         self.assertEqual(payload["quality"]["skipped_flow_count"], 0)
         self.assertEqual(payload["quality"]["price_source_label"], "收盘价估算")
         self.assertEqual(payload["sections"]["strategy"]["rows"][0]["index_name"], "红利")
+
+    def test_etf_flow_coverage_excludes_enhanced_etfs_from_frontend_denominator(self):
+        funds = {
+            "510300.SH": {
+                "name": "沪深300ETF华泰柏瑞",
+                "benchmark": "沪深300指数收益率",
+                "invest_type": "被动指数型",
+            },
+            "159238.SZ": {
+                "name": "沪深300增强ETF景顺",
+                "benchmark": "沪深300指数收益率",
+                "invest_type": "增强指数型",
+            },
+            "159981.SZ": {
+                "name": "能源化工ETF建信",
+                "benchmark": "易盛郑商所能源化工指数A",
+                "invest_type": "能源化工期货型",
+            },
+        }
+        payload = etf_flows_for_window(
+            funds,
+            ["20260611", "20260610"],
+            1,
+            daily_prices={
+                "20260611": {"510300.SH": 4.0, "159238.SZ": 1.0, "159981.SZ": 1.0},
+                "20260610": {"510300.SH": 3.9, "159238.SZ": 1.0, "159981.SZ": 1.0},
+            },
+            daily_navs={"20260611": {}},
+            daily_shares={
+                "20260611": {"510300.SH": 110000, "159238.SZ": 110000, "159981.SZ": 110000},
+                "20260610": {"510300.SH": 100000, "159238.SZ": 100000, "159981.SZ": 100000},
+            },
+        )
+
+        self.assertEqual(payload["coverage"]["priced_etf_count"], 3)
+        self.assertEqual(payload["coverage"]["target_equity_etf_count"], 2)
+        self.assertEqual(payload["coverage"]["frontend_target_equity_etf_count"], 1)
+        self.assertEqual(payload["coverage"]["non_frontend_target_equity_etf_count"], 1)
+        self.assertEqual(payload["coverage"]["excluded_non_target_etf_count"], 1)
+        self.assertEqual(payload["coverage"]["classified_target_equity_etf_count"], 1)
+        self.assertEqual(payload["coverage"]["raw_target_coverage_pct"], 50.0)
+        self.assertEqual(payload["coverage"]["target_coverage_pct"], 100.0)
+        self.assertEqual(payload["sections"]["broad"]["rows"][0]["index_name"], "沪深300")
 
     def test_etf_flow_quality_reports_skipped_window_points(self):
         funds = {
@@ -1059,6 +1123,38 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(payload["quality"]["flow_price_status"], "estimated")
         self.assertEqual(payload["quality"]["nav_estimate_ratio_pct"], 100.0)
         self.assertEqual(payload["quality"]["scale_audit"]["status"], "ok")
+
+    def test_etf_debug_share_change_uses_window_start_share(self):
+        funds = {
+            "510300.SH": {
+                "name": "沪深300ETF华泰柏瑞",
+                "benchmark": "沪深300指数收益率",
+                "invest_type": "被动指数型",
+            },
+        }
+        payload = etf_flows_for_window(
+            funds,
+            ["20260611", "20260610", "20260609"],
+            2,
+            daily_prices={
+                "20260611": {"510300.SH": 4.0},
+                "20260610": {"510300.SH": 3.9},
+                "20260609": {"510300.SH": 3.8},
+            },
+            daily_navs={"20260611": {}, "20260610": {}},
+            daily_shares={
+                "20260611": {"510300.SH": 120000},
+                "20260610": {"510300.SH": 100000},
+                "20260609": {"510300.SH": 90000},
+            },
+        )
+
+        debug_item = payload["sections"]["broad"]["rows"][0]["debug_etfs"][0]
+        self.assertEqual(debug_item["latest_share_wan"], 120000)
+        self.assertEqual(debug_item["previous_share_wan"], 90000)
+        self.assertEqual(debug_item["share_change_wan"], 30000)
+        self.assertEqual(debug_item["window_start_share_wan"], 90000)
+        self.assertEqual(debug_item["window_share_change_wan"], 30000)
 
     def test_etf_flow_regression_snapshot_for_core_accounting(self):
         funds = {

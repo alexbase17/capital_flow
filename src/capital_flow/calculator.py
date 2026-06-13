@@ -16,6 +16,8 @@ from src.tushare_client import TushareUnavailable
 from src.capital_flow.taxonomy import (
     classify_etf_group,
     index_code_for_group,
+    is_frontend_target_equity_etf,
+    is_non_equity_invest_type,
     is_target_equity_etf,
 )
 from src.capital_flow.types import EtfDailyMetrics, EtfLatestMetrics, EtfStaticInfo, EtfTopItem
@@ -345,6 +347,10 @@ def etf_top_item(
         "share_change_wan": round(latest_flow_share - previous_flow_share, 4)
         if latest_flow_share is not None and previous_flow_share is not None
         else None,
+        "window_start_share_wan": round(previous_flow_share, 4) if previous_flow_share is not None else None,
+        "window_share_change_wan": round(latest_flow_share - previous_flow_share, 4)
+        if latest_flow_share is not None and previous_flow_share is not None
+        else None,
         "skipped_flow_count": skipped_flow_count,
         "split_adjusted_count": split_adjusted_count,
     }
@@ -383,6 +389,8 @@ def etf_flows_for_window(
     total_etf_count = 0
     priced_etf_count = 0
     target_etf_count = 0
+    frontend_target_etf_count = 0
+    non_frontend_target_etf_count = 0
     classified_target_etf_count = 0
     excluded_non_target_etf_count = 0
     skipped_flow_count = 0
@@ -403,12 +411,19 @@ def etf_flows_for_window(
             skipped_flow_count += 1
             continue
         priced_etf_count += 1
+        if is_non_equity_invest_type(info.invest_type):
+            excluded_non_target_etf_count += 1
+            continue
         is_target = is_target_equity_etf(info.name, info.benchmark)
         if is_target:
             target_etf_count += 1
         else:
             excluded_non_target_etf_count += 1
             continue
+        if not is_frontend_target_equity_etf(info.name, info.benchmark, info.invest_type):
+            non_frontend_target_etf_count += 1
+            continue
+        frontend_target_etf_count += 1
         classified = classified_group(info)
         if not classified:
             continue
@@ -472,7 +487,7 @@ def etf_flows_for_window(
                 etf_split_adjusted_count += 1
             if day_index == 0:
                 latest_flow_share = daily_metrics.current_share
-                previous_flow_share = daily_metrics.comparable_previous_share
+            previous_flow_share = daily_metrics.comparable_previous_share
             last_flow_price = daily_metrics.comparable_flow_price or last_flow_price
             last_price_source = daily_metrics.price_source or last_price_source
             last_price_source_label = daily_metrics.price_source_label or last_price_source_label
@@ -534,10 +549,15 @@ def etf_flows_for_window(
             "total_etf_count": total_etf_count,
             "priced_etf_count": priced_etf_count,
             "target_equity_etf_count": target_etf_count,
+            "frontend_target_equity_etf_count": frontend_target_etf_count,
+            "non_frontend_target_equity_etf_count": non_frontend_target_etf_count,
             "classified_target_equity_etf_count": classified_target_etf_count,
             "excluded_non_target_etf_count": excluded_non_target_etf_count,
-            "target_coverage_pct": round(classified_target_etf_count / target_etf_count * 100, 2)
+            "raw_target_coverage_pct": round(classified_target_etf_count / target_etf_count * 100, 2)
             if target_etf_count
+            else None,
+            "target_coverage_pct": round(classified_target_etf_count / frontend_target_etf_count * 100, 2)
+            if frontend_target_etf_count
             else None,
         },
         "quality": {

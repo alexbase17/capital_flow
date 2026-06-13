@@ -263,6 +263,10 @@ curl --noproxy '*' -sS http://127.0.0.1:5083/api/capital-flow
 - `etf.quality`
 - `etf.sections`
 
+当外部数据刷新失败或服务 warm start 使用上次成功 payload 时，`payload_cache_status=stale`
+会同步写入顶层、当前窗口和全部 `window_payloads` 的 ETF `data_status`。后台审计和 AI
+摘要输入都应把该状态视为缓存兜底数据，不能当作本次已成功刷新的最新结果。
+
 ### AI 总结不显示
 
 可能原因：
@@ -270,6 +274,8 @@ curl --noproxy '*' -sS http://127.0.0.1:5083/api/capital-flow
 - `.env.local` 未配置 `DEEPSEEK_API_KEY`。
 - DeepSeek 余额、权限、网络或限流异常。
 - 模型返回非 JSON 或字段不完整，后端返回隐藏摘要占位。
+- 资金流向 payload 使用缓存兜底时，AI 输入会携带 `quality.payload_cache_status=stale`，
+  模型应按上次成功数据解读。
 
 检查：
 
@@ -304,8 +310,10 @@ launchctl kickstart -k gui/$(id -u)/com.capital-flow.web
 
 - `by_source.benchmark_exact` 是否提升，表示更多 ETF 使用明确指数映射。
 - `by_source.benchmark_pattern` 是否下降，表示关键词兜底减少。
+- `summary.coverage_pct` 使用前台可聚合目标为分母；`summary.raw_coverage_pct` 使用广义权益目标为分母。两者差异主要来自指数增强等不进入前台聚合的目标。
+- `non_frontend_target_samples` 应主要是指数增强等已识别但不纳入宽基被动/行业/策略表的 ETF，不应混入普通被动行业或宽基 ETF。
 - `by_taxonomy_type` 和 `by_parent_bucket` 是否符合预期，用于观察行业、主题、策略和后台大类结构。
-- `unclassified_samples` 是否主要是增强、ESG、区域、国企改革、非主流宽基等暂不进入前台聚合的品种。
+- `unclassified_samples` 是否主要是区域、ESG、低碳、碳中和、新材料等需要成分暴露复核的主题；不要为了追求覆盖率，把无法确认的主题仅凭基金简称并入行业表。
 - `sw2021_exposure.exposures` 中 `top_industry_weight` 是否足够集中；主题指数如果前三大行业分散，应保留主题分类，不硬并入单一传统行业。
 - `sw2021_exposure.missing_index_code_samples` 会按当前 ETF 规模优先展示，先补 `scale_yi` 大、`etf_count` 多且能唯一确认的指数代码。
 - `sw2021_exposure.label_consistency.flagged_samples` 是否提示同一前台标签下的跟踪指数暴露差异过大；这类结果先人工复核，不自动拆分前台标签。

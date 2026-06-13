@@ -24,6 +24,8 @@ class EtfTopItem(TypedDict, total=False):
     latest_share_wan: float | None
     previous_share_wan: float | None
     share_change_wan: float | None
+    window_start_share_wan: float | None
+    window_share_change_wan: float | None
     skipped_flow_count: int
     split_adjusted_count: int
 
@@ -70,4 +72,3 @@ class EtfDailyMetrics:
 
 
 PayloadDict = dict[str, Any]
-

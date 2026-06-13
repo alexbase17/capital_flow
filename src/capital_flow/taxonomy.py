@@ -318,6 +318,7 @@ NON_EQUITY_ETF_MARKERS = (
     "存款",
     "通知存款",
     "利率",
+    "期货",
 )
 NON_TARGET_ETF_MARKERS = NON_EQUITY_ETF_MARKERS + (
     "黄金",
@@ -343,6 +344,7 @@ NON_TARGET_ETF_MARKERS = NON_EQUITY_ETF_MARKERS + (
     "REIT",
     "REITS",
 )
+NON_EQUITY_INVEST_TYPE_MARKERS = ("期货", "货币", "债券", "商品")
 
 
 @dataclass(frozen=True)
@@ -555,6 +557,18 @@ def is_target_equity_etf(clean_name: str, benchmark: str) -> bool:
     if record is not None:
         return record.section != "excluded" and record.asset_class == "equity"
     return not any(marker in clean_name or marker in normalized_benchmark for marker in NON_TARGET_ETF_MARKERS)
+
+
+def is_non_equity_invest_type(invest_type: str) -> bool:
+    return any(marker in str(invest_type or "") for marker in NON_EQUITY_INVEST_TYPE_MARKERS)
+
+
+def is_frontend_target_equity_etf(clean_name: str, benchmark: str, invest_type: str) -> bool:
+    if is_non_equity_invest_type(invest_type):
+        return False
+    if not is_target_equity_etf(clean_name, benchmark):
+        return False
+    return not invest_type or invest_type == "被动指数型"
 
 
 def hk_label(label: str) -> str:
