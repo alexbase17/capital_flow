@@ -6,7 +6,8 @@ cd "$ROOT_DIR"
 
 PORT="${PORT:-5083}"
 HOST="${HOST:-0.0.0.0}"
-VENV_DIR="${VENV_DIR:-.venv}"
+
+source "$ROOT_DIR/scripts/lib_env.sh"
 
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy WS_PROXY WSS_PROXY
 
@@ -16,11 +17,7 @@ if [ -f ".env.local" ]; then
   set +a
 fi
 
-if [ ! -x "$VENV_DIR/bin/python" ]; then
-  python3 -m venv "$VENV_DIR"
-fi
+ensure_requirements
 
-"$VENV_DIR/bin/python" -m pip install -r requirements.txt
-
-PYTHONDONTWRITEBYTECODE=1 "$VENV_DIR/bin/python" -c \
+PYTHONDONTWRITEBYTECODE=1 "$PYTHON_BIN" -c \
   "from src.app import app, initialize_app; initialize_app(); app.run(debug=False, port=$PORT, host='$HOST')"

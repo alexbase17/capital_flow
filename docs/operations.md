@@ -117,7 +117,7 @@ launchctl bootstrap gui/$(id -u) /Users/nova/Library/LaunchAgents/com.capital-fl
 仅需要重启当前运行实例时：
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.capital-flow.web
+scripts/restart_web.sh
 ```
 
 修改 `src/templates/` 或 `src/static/` 后，后台服务需要重启或 kickstart。Flask 生产模式下可能继续使用旧模板缓存；如果只更新了 CSS/JS 而模板仍旧，页面会出现旧 DOM 与新样式混用的问题。
@@ -127,14 +127,13 @@ launchctl kickstart -k gui/$(id -u)/com.capital-flow.web
 页面：
 
 ```bash
-curl --noproxy '*' -sS -o /tmp/capital_flow.html -w '%{http_code}\n' http://127.0.0.1:5083/
-curl --noproxy '*' -sS -o /tmp/capital_flow_lan.html -w '%{http_code}\n' http://192.168.5.6:5083/
+scripts/check_web.sh
 ```
 
-API：
+`scripts/check_web.sh` 默认验证首页和主数据 API，并显式禁用本机代理，避免代理配置干扰 localhost 探活。默认地址为 `http://127.0.0.1:5083`，可用 `BASE_URL` 覆盖：
 
 ```bash
-curl --noproxy '*' -sS -o /tmp/capital_flow.json -w '%{http_code}\n' http://127.0.0.1:5083/api/capital-flow
+BASE_URL=http://192.168.5.6:5083 scripts/check_web.sh
 ```
 
 期望 HTTP 状态码均为 `200`。成功生成的主 payload 会落盘缓存；服务重启后若 12 小时内存在上次成功 payload，API 会先快速返回缓存并在页面状态栏提示“使用上次成功缓存”。如果后续 TuShare 短时限流或网络失败，API 也会返回上次成功 payload，避免整页空白。
@@ -142,7 +141,7 @@ curl --noproxy '*' -sS -o /tmp/capital_flow.json -w '%{http_code}\n' http://127.
 AI 摘要单独验证：
 
 ```bash
-curl --noproxy '*' -sS -o /tmp/capital_flow_ai_summary.json -w '%{http_code}\n' http://127.0.0.1:5083/api/capital-flow/ai-summary
+CHECK_AI_SUMMARY=1 scripts/check_web.sh
 ```
 
 `/api/capital-flow` 不同步等待 DeepSeek，只返回核心表格数据和隐藏摘要占位；`/api/capital-flow/ai-summary` 会在主表加载后单独调用 DeepSeek，默认等待 30 秒。若 DeepSeek key、余额、网络或模型名异常，页面会隐藏 AI 总结模块，表格不应空白。
@@ -155,22 +154,33 @@ curl --noproxy '*' -sS -o /tmp/capital_flow_ai_summary.json -w '%{http_code}\n' 
 
 ## 项目验证
 
+日常快速验证：
+
+```bash
+scripts/verify_fast.sh
+```
+
+提交或上线前完整验证：
+
 ```bash
 scripts/verify_all.sh
 ```
 
-验证包含：
+`verify_fast.sh` 包含：
 
 - Python 单元测试。
-- Python 编译检查。
 - `node --check src/static/capital_flow.js`。
 - Git whitespace 检查。
 
-如果当前项目 `.venv` 不可用，也可以复用家庭资产项目虚拟环境：
+`verify_all.sh` 额外包含 Python 编译检查。
 
-```bash
-PYTHON_BIN=/Users/nova/workspace/data_forge_ws/.venv/bin/python scripts/verify_all.sh
-```
+`scripts/start_web.sh`、`scripts/verify_fast.sh` 和 `scripts/verify_all.sh` 共享 `scripts/lib_env.sh`：
+
+- 默认使用本项目 `.venv`。
+- 如果默认 `.venv` 损坏，会自动用 `python3 -m venv --clear .venv` 重建。
+- `requirements.txt` 未变化时跳过 `pip install`，减少启动和测试耗时。
+- 统一设置 `PYTHONPYCACHEPREFIX=/tmp/capital_flow_pycache`，避免 macOS 系统 Python 把编译缓存写到受限目录。
+- 如确实需要使用外部解释器，可显式传入 `PYTHON_BIN=/path/to/python scripts/verify_all.sh`；外部解释器不可用时脚本会直接失败，不会自动清理外部环境。
 
 ## 日志
 

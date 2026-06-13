@@ -23,7 +23,7 @@
 
 ```bash
 cd /Users/nova/workspace/capital_flow_ws
-PYTHON_BIN=/Users/nova/workspace/data_forge_ws/.venv/bin/python scripts/verify_all.sh
+scripts/verify_fast.sh
 ```
 
 本机启动：
@@ -109,23 +109,35 @@ docs/                               架构、运维、数据源、变更记录
 
 ## 验证
 
+日常代码改动优先跑快速验证：
+
+```bash
+scripts/verify_fast.sh
+```
+
+提交或上线前跑完整验证：
+
 ```bash
 scripts/verify_all.sh
 ```
 
-验证包含：
+快速验证包含：
 
 - Python 单元测试
-- Python 编译检查
 - 前端 JavaScript 语法检查
 - Git whitespace 检查
+
+完整验证额外包含：
+
+- Python 编译检查
 
 常用页面/API 验证：
 
 ```bash
-curl --noproxy '*' -sS -o /tmp/capital_flow.html -w '%{http_code}\n' http://127.0.0.1:5083/
-curl --noproxy '*' -sS -o /tmp/capital_flow.json -w '%{http_code}\n' http://127.0.0.1:5083/api/capital-flow
+scripts/check_web.sh
 ```
+
+`scripts/check_web.sh` 默认只检查首页和主数据 API，不请求 DeepSeek；需要连同 AI 摘要一起检查时设置 `CHECK_AI_SUMMARY=1`。
 
 ## 文档
 

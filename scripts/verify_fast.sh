@@ -10,13 +10,10 @@ ensure_requirements
 echo "== Python unit tests =="
 "$PYTHON_BIN" -W error::ResourceWarning -m unittest discover -s tests
 
-echo "== Python compile check =="
-"$PYTHON_BIN" -m compileall scripts src tests
-
 echo "== JavaScript syntax check =="
 node --check src/static/capital_flow.js
 
 echo "== Git whitespace check =="
 git diff --check
 
-echo "All verification steps passed."
+echo "Fast verification passed."

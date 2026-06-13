@@ -2,6 +2,7 @@
 
 ## 2026-06-13
 
+- 优化本地验证和启动链路：新增 `scripts/lib_env.sh` 统一管理 `.venv`、requirements hash 和 pycache 路径；`start_web.sh`、`verify_all.sh` 复用同一环境逻辑，默认虚拟环境损坏时自动重建，依赖未变化时跳过 `pip install`。新增 `verify_fast.sh`、`check_web.sh`、`restart_web.sh`，降低日常测试、接口探活和服务重启成本。
 - 优化 DeepSeek prompt 结构：将“挖掘最值得关注、最能辅助后续观察决策的 3-5 个信号”前置为主目标，筛选维度扩展为金额、净申购占比、涨跌幅、成交均值占比及其组合异常，并明确这些维度不要求全部满足；新增同一资金主线优先合并、避免重复关注点的要求。同步提升 `AI_SUMMARY_PROMPT_VERSION`，使旧 AI 摘要缓存自动失效。
 - 新增 AI 摘要缓存：DeepSeek 成功摘要按“摘要输入哈希 + 模型 + API 地址 + prompt 版本”缓存 24 小时，同一数据版本反复打开页面不再重复请求；底层资金流数据、模型或 prompt 变化会自动失效，`refresh=1` 可人工强刷。
 - 完善 DeepSeek 输入数据口径：候选信号新增同窗口复权涨跌幅和同窗口成交均值占比，字段改为 `flow_Xd_yi`、`change_Xd_pct`、`turnover_Xd_avg_pct`；新增 `metric_notes` 约束模型只有同窗口数据才能称为同期、共振或背离，避免把 60 日净申购和 1 日涨跌幅错误配对。AI 输出进一步统一为表格术语（净申购占比、成交均值占比），并要求亿元金额按表格精度表达，标题右侧仅保留模型名。
