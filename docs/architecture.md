@@ -43,6 +43,7 @@
 | `src/tushare_client.py` | TuShare Pro 最小客户端，统一错误处理 |
 | `src/capital_flow/routes.py` | 页面路由和 API 路由 |
 | `src/capital_flow/service.py` | 缓存、窗口选择、TuShare 拉取编排、payload 校验 |
+| `src/capital_flow/ai_summary.py` | AI 总结结构化输入、DeepSeek 调用和本地规则兜底 |
 | `src/capital_flow/fetcher.py` | 按接口封装 TuShare 数据读取 |
 | `src/capital_flow/calculator.py` | 北上/南下资金、ETF 净申购、规模、涨跌幅、成交均值占比计算 |
 | `src/capital_flow/taxonomy_data.json` | ETF 精确指数分类主数据，记录 market、asset_class、taxonomy_type、parent_bucket 等后台字段 |
@@ -95,6 +96,14 @@ TuShare 文件缓存：
 - `selected_window` / `selected_window_label`：当前窗口。
 - `threshold_yi`：行业和策略因子的规模展示阈值，当前为 `20`。
 - `notes`：页面口径提示。
+- `ai_summary`：页面头部摘要，包含 `headline`、`focus_items`、`risks`、`data_quality`、`source` 和 `model`；该字段只用于解释展示，不参与任何资金流计算。
+
+AI 总结流程：
+
+1. 后端先从完整 payload 压缩出摘要输入，包括各窗口分区净申购、分区 Top 流入/流出、资金/价格/成交三因子候选信号和质量字段。
+2. 未配置 `DEEPSEEK_API_KEY` 时，直接使用本地规则摘要。
+3. 配置 DeepSeek 后，调用兼容 OpenAI chat-completions 的 DeepSeek API，要求模型只输出固定 JSON。
+4. DeepSeek 调用失败、返回非 JSON 或字段不完整时，自动回退本地规则摘要，核心看板数据不受影响。
 
 ETF 分组行除表格指标外还包含展开图序列：
 

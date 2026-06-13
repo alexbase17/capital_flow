@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from src.tushare_client import TushareClient, TushareUnavailable
+from src.capital_flow.ai_summary import capital_flow_ai_summary
 from src.capital_flow.calculator import (
     EtfFlowGroup,
     MIN_INDEX_SCALE_YI,
@@ -154,7 +155,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
             ),
         }
     selected_payload = window_payloads[key]
-    return {
+    payload = {
         "data_status": {
             "etf": selected_payload["etf"]["data_status"],
             "north_south": north_south_data_status(hsgt_rows),
@@ -177,6 +178,8 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
             "总览并列展示不同资金来源，不直接加总；宽基被动 ETF 排除增强、价值、成长、红利低波等策略变体；宽基、策略因子、A 股行业和港股行业均只展示聚合规模不低于 20 亿元的项目；A 股行业和港股行业只按跟踪指数归类，未匹配到标准指数规则的 ETF 不纳入行业聚合。",
         ],
     }
+    payload["ai_summary"] = capital_flow_ai_summary(payload)
+    return payload
 
 
 def aligned_fund_dates(

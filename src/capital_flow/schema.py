@@ -16,6 +16,7 @@ REQUIRED_TOP_LEVEL_KEYS = {
     "window_payloads",
     "threshold_yi",
     "notes",
+    "ai_summary",
 }
 REQUIRED_ETF_KEYS = {
     "latest_date",
@@ -91,6 +92,7 @@ def validate_capital_flow_payload(payload: dict[str, Any]) -> dict[str, Any]:
             )
     if not isinstance(payload["notes"], list):
         raise ValueError("capital-flow notes must be a list")
+    _validate_ai_summary(_expect_dict(payload["ai_summary"], "ai_summary"))
     return payload
 
 
@@ -114,3 +116,13 @@ def _expect_dict(value: Any, path: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"capital-flow {path} must be a dict")
     return value
+
+
+def _validate_ai_summary(summary: dict[str, Any]) -> None:
+    for key in ("status", "source", "headline", "focus_items", "risks", "data_quality"):
+        if key not in summary:
+            raise ValueError(f"capital-flow ai_summary missing key: {key}")
+    if not isinstance(summary["focus_items"], list):
+        raise ValueError("capital-flow ai_summary.focus_items must be a list")
+    if not isinstance(summary["risks"], list):
+        raise ValueError("capital-flow ai_summary.risks must be a list")

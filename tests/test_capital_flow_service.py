@@ -1233,6 +1233,14 @@ class CapitalFlowServiceTests(unittest.TestCase):
             },
             "threshold_yi": 20,
             "notes": [],
+            "ai_summary": {
+                "status": "ready",
+                "source": "rules",
+                "headline": "资金流向分化",
+                "focus_items": [],
+                "risks": [],
+                "data_quality": "数据质量正常",
+            },
         }
 
         self.assertIs(validate_capital_flow_payload(payload), payload)

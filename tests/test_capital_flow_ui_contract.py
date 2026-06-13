@@ -35,12 +35,18 @@ class CapitalFlowUiContractTests(unittest.TestCase):
         self.assertNotIn("onclick=", html)
         self.assertIn("ETF净申购金额", html)
         self.assertIn('class="data-status" id="dataStatus"', html)
+        self.assertIn('id="aiSummaryPanel"', html)
+        self.assertIn("AI总结", html)
         self.assertLess(
             html.index('class="section-nav"'),
             html.index('class="data-status" id="dataStatus"'),
         )
         self.assertLess(
             html.index('class="data-status" id="dataStatus"'),
+            html.index('id="aiSummaryPanel"'),
+        )
+        self.assertLess(
+            html.index('id="aiSummaryPanel"'),
             html.index('id="capital-section-total" data-section="total"'),
         )
         self.assertIn("宽基被动ETF", html)
@@ -104,6 +110,8 @@ class CapitalFlowUiContractTests(unittest.TestCase):
         self.assertNotIn("refresh=1", script)
         self.assertIn("function renderTotalFlow", script)
         self.assertIn("function renderDataStatus", script)
+        self.assertIn("function renderAiSummary", script)
+        self.assertIn("ai_summary", script)
         self.assertIn("function yiFractionDigits", script)
         self.assertIn("if (absValue >= 100) return 0;", script)
         self.assertIn("if (absValue >= 10) return 1;", script)
@@ -128,6 +136,7 @@ class CapitalFlowUiContractTests(unittest.TestCase):
         self.assertIn("价格日", script)
         self.assertIn("份额日", script)
         self.assertIn("净申购估值", script)
+        self.assertIn(".ai-summary-grid", css)
         self.assertIn("已回退到最近完整交易日", script)
         self.assertIn("北上资金", script)
         self.assertIn("南下资金", script)

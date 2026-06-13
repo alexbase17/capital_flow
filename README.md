@@ -16,6 +16,7 @@
 - 总览表首行展示 5 日成交均值占比，用于辅助观察二级市场日均交易热度。
 - 明细表展示当日涨跌幅、5 日成交均值占比、各窗口净申购、各窗口净申购占比、当日 ETF 规模。
 - 点击明细行可展开 60 日分天涨跌幅、5 日滑动窗口成交均值占比、分天净申购金额和 5 日滑动窗口净申购金额走势。
+- 页面头部展示 AI/规则摘要，基于一级市场净申购、二级市场成交热度和涨跌幅提炼关键关注点。
 - 宽基 ETF、策略因子、A 股行业、港股行业只展示聚合规模合计不低于 20 亿元的项目。
 
 ## 快速接手
@@ -47,9 +48,13 @@ API: http://127.0.0.1:5083/api/capital-flow
 
 ```env
 TUSHARE_TOKEN=你的TuShareToken
+DEEPSEEK_API_KEY=可选DeepSeekKey
+DEEPSEEK_MODEL=deepseek-chat
 ```
 
 `TUSHARE_TOKEN` 通过 `src/config_loader.py` 读取。缺失时 API 会返回 502，并提示 `TUSHARE_TOKEN is not set`。
+
+`DEEPSEEK_API_KEY` 可选。配置后，API 会把压缩后的看板关键数据发送给 DeepSeek 生成页面头部摘要；未配置或调用失败时，自动使用本地规则摘要，不影响核心数据展示。`DEEPSEEK_MODEL` 可按 DeepSeek 当前 API 模型名调整。
 
 ## 目录结构
 
@@ -57,6 +62,7 @@ TUSHARE_TOKEN=你的TuShareToken
 src/app.py                         Flask app 入口
 src/capital_flow/routes.py          页面和 API 路由
 src/capital_flow/service.py         缓存、窗口选择、API payload 编排
+src/capital_flow/ai_summary.py      AI 总结输入压缩、DeepSeek 调用和规则兜底
 src/capital_flow/fetcher.py         TuShare 数据拉取
 src/capital_flow/calculator.py      北上/南下和 ETF 净申购计算
 src/capital_flow/taxonomy_data.json ETF 精确指数分类主数据
@@ -93,6 +99,7 @@ docs/                               架构、运维、数据源、变更记录
 - 宽基被动 ETF：要求跟踪基准明确匹配宽基指数，且宽基匹配时要求 `invest_type = 被动指数型`。
 - 行业和策略因子：优先按 `fund_basic.benchmark` 跟踪指数归类，不靠基金简称做主观分类；分类会标记精确映射或关键词兜底，后台可用审计脚本检查覆盖率和低置信度样本。
 - A 股行业体系：前台优先沿用中证/国证/上证/深证等跟踪指数名称，后台可用申万 2021 一级行业成分暴露审计主题 ETF，先发现偏差再谨慎调整主数据。
+- AI 总结：只读取 API 中的结构化摘要输入，提炼关注点、背离和数据质量提示；不改变任何计算口径，也不作为投资建议。
 
 详细口径见 [docs/data_sources.md](docs/data_sources.md)。
 
