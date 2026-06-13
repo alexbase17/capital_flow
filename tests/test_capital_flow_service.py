@@ -902,6 +902,40 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(row["daily_change_pct"], [{"date": "2026-06-11", "value": 0.8}])
         self.assertEqual(row["net_flow_yi"], 0.96)
 
+    def test_etf_scale_and_flow_ratio_prefer_nav_over_close(self):
+        funds = {
+            "510300.SH": {
+                "name": "沪深300ETF华泰柏瑞",
+                "benchmark": "沪深300指数收益率",
+                "invest_type": "被动指数型",
+            },
+        }
+        payload = _etf_flows_for_window(
+            funds,
+            ["20260611", "20260610"],
+            1,
+            daily_prices={
+                "20260611": {"510300.SH": 10.0},
+                "20260610": {"510300.SH": 8.0},
+            },
+            daily_navs={
+                "20260611": {"510300.SH": 9.5},
+                "20260610": {"510300.SH": 8.5},
+            },
+            daily_shares={
+                "20260611": {"510300.SH": 110000},
+                "20260610": {"510300.SH": 100000},
+            },
+        )
+
+        row = payload["sections"]["broad"]["rows"][0]
+        self.assertEqual(row["net_flow_yi"], 9.5)
+        self.assertEqual(row["scale_yi"], 104.5)
+        self.assertEqual(row["start_scale_yi"], 85.0)
+        self.assertEqual(row["net_flow_ratio"], 11.18)
+        self.assertEqual(row["scale_audit"]["scale_delta_yi"], 30.0)
+        self.assertEqual(row["scale_audit"]["residual_yi"], 0.5)
+
     def test_turnover_ratio_averages_daily_turnover_intensity(self):
         funds = {
             "510300.SH": {
