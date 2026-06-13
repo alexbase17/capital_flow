@@ -298,15 +298,17 @@ function renderDailyFlowBars(points, label) {
   return `
     <div class="flow-chart">
       <div class="chart-title">${label}</div>
-      <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
-        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
-          <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
-          ${bars}
-        </svg>
-        <div class="chart-hover-layer" aria-hidden="true"></div>
-        <div class="chart-tooltip" aria-hidden="true"></div>
+      <div class="flow-chart-body">
+        <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
+          <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
+            <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
+            ${bars}
+          </svg>
+          <div class="chart-hover-layer" aria-hidden="true"></div>
+          <div class="chart-tooltip" aria-hidden="true"></div>
+        </div>
+        ${renderChartRangeTicks(tooltipValues)}
       </div>
-      ${renderChartRangeTicks(tooltipValues)}
     </div>
   `;
 }
@@ -340,16 +342,18 @@ function renderRollingFlowLine(points, label) {
   return `
     <div class="flow-chart">
       <div class="chart-title">${label}</div>
-      <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
-        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
-          <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
-          <path d="${path}" class="flow-line"></path>
-          ${dots}
-        </svg>
-        <div class="chart-hover-layer" aria-hidden="true"></div>
-        <div class="chart-tooltip" aria-hidden="true"></div>
+      <div class="flow-chart-body">
+        <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
+          <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
+            <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
+            <path d="${path}" class="flow-line"></path>
+            ${dots}
+          </svg>
+          <div class="chart-hover-layer" aria-hidden="true"></div>
+          <div class="chart-tooltip" aria-hidden="true"></div>
+        </div>
+        ${renderChartRangeTicks(tooltipValues)}
       </div>
-      ${renderChartRangeTicks(tooltipValues)}
     </div>
   `;
 }
@@ -358,9 +362,11 @@ function renderFlowChart(row) {
   const points = row.daily_net_flow || [];
   if (!points.length) return '<div class="empty">暂无60日净申购数据</div>';
   return `
-    <div class="flow-chart-stack">
-      ${renderDailyFlowBars(points, "分天净申购金额")}
-      ${renderRollingFlowLine(points, "5日滑动窗口净申购金额")}
+    <div class="flow-chart-viewport">
+      <div class="flow-chart-stack">
+        ${renderDailyFlowBars(points, "分天净申购金额")}
+        ${renderRollingFlowLine(points, "5日滑动窗口净申购金额")}
+      </div>
     </div>
   `;
 }
