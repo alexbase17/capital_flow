@@ -146,6 +146,14 @@ BASE_URL=http://192.168.5.6:5083 scripts/check_web.sh
 
 该脚本会验证首页 HTML 引入了全部拆分后的 `capital_flow*.js`，脚本顺序正确，入口 JS 只初始化一次，静态资源和 `/api/capital-flow` 均可访问。修改模板、JS 拆分、启动脚本或遇到“页面只有标题/加载失败”时必须运行。
 
+浏览器级回归测试：
+
+```bash
+BASE_URL=http://127.0.0.1:5083 scripts/verify_dashboard_browser.sh
+```
+
+该脚本会先运行 `check_web.sh`，再启动本机 Google Chrome headless，通过 Chrome DevTools Protocol 验证桌面和移动视口下的真实页面行为：主表可渲染、AI 摘要接口失败时不影响表格、sticky 表头生效、宽基行可展开、4 张展开图存在、关键图表标题和悬停 tooltip 可用。脚本不依赖 npm 包，但需要本机安装 Google Chrome；模板、CSS、JS 或图表交互变更后建议运行。
+
 AI 摘要单独验证：
 
 ```bash
@@ -178,9 +186,10 @@ scripts/verify_all.sh
 
 - Python 单元测试。
 - `node --check src/static/capital_flow*.js`，覆盖资金流前端全部 JS 模块。
+- `node --check scripts/verify_dashboard_browser.mjs`，确保浏览器回归脚本语法可用。
 - Git whitespace 检查。
 
-`verify_all.sh` 额外包含 Python 编译检查和 `scripts/validate_taxonomy_data.py` 分类主数据校验。
+`verify_all.sh` 额外包含 Python 编译检查和 `scripts/validate_taxonomy_data.py` 分类主数据校验。为了避免无 Chrome 的环境被阻断，完整验证不会自动启动真实浏览器；上线前需要显式运行 `BASE_URL=http://127.0.0.1:5083 scripts/verify_dashboard_browser.sh`。
 
 分类主数据单独校验：
 

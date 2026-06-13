@@ -189,9 +189,12 @@ scripts/verify_all.sh
 ```bash
 scripts/check_web.sh
 .venv/bin/python scripts/verify_dashboard_page.py http://127.0.0.1:5083
+BASE_URL=http://127.0.0.1:5083 scripts/verify_dashboard_browser.sh
 ```
 
 `verify_dashboard_page.py` 会检查首页实际下发的拆分 JS 顺序、静态资源可访问性、入口只初始化一次，以及 `/api/capital-flow` 至少返回可渲染分区，用于捕捉“页面只有标题/加载失败”这类运行时问题。
+
+`verify_dashboard_browser.sh` 会先运行 `check_web.sh`，再用本机 Google Chrome headless 和 Chrome DevTools Protocol 做真实浏览器回归；当前覆盖桌面和移动视口、主表渲染、sticky 表头、宽基行展开、4 张展开图、图表 tooltip，以及 AI 摘要接口 502 时表格仍可正常展示。该脚本不依赖 npm 包，但需要本机安装 Google Chrome；`verify_all.sh` 只做脚本语法检查，真实浏览器回归由上线前显式运行。
 
 分类主数据校验：
 
@@ -214,4 +217,4 @@ scripts/audit_capital_flow_snapshot.py --max-items 12
 - 修改 API 字段时，必须同步 `schema.py` 和前端渲染逻辑。
 - 修改分类规则时，优先在 `taxonomy_data.json` 增加明确的跟踪指数映射；不要仅凭基金简称做高风险主观归类。修改后运行 `scripts/audit_etf_taxonomy.py`，确认精确映射、关键词兜底和未分类样本变化符合预期。
 - 修改 A 股行业/主题边界时，先运行 `scripts/audit_etf_taxonomy.py --with-sw-exposure` 做申万 2021 成分暴露复核；只有暴露结果稳定、指数代码唯一且样本合理时，才更新前台分类主数据。
-- 修改页面布局时，至少运行 `for script in src/static/capital_flow*.js; do node --check "$script"; done` 和完整 `scripts/verify_all.sh`。
+- 修改页面布局时，至少运行 `for script in src/static/capital_flow*.js; do node --check "$script"; done`、完整 `scripts/verify_all.sh` 和 `BASE_URL=http://127.0.0.1:5083 scripts/verify_dashboard_browser.sh`。

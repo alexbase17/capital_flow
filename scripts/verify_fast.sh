@@ -14,6 +14,7 @@ echo "== JavaScript syntax check =="
 for script in src/static/capital_flow*.js; do
   node --check "$script"
 done
+node --check scripts/verify_dashboard_browser.mjs
 
 echo "== Git whitespace check =="
 git diff --check

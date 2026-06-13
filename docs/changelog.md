@@ -2,6 +2,7 @@
 
 ## 2026-06-14
 
+- 新增真实浏览器级资金流页面回归测试：`scripts/verify_dashboard_browser.sh` 先做首页/API 探活，再用本机 Google Chrome headless + CDP 覆盖桌面/移动视口、主表渲染、AI 摘要失败兜底、sticky 表头、宽基行展开、4 张展开图和图表 tooltip；`verify_fast.sh`/`verify_all.sh` 同步对该脚本做语法检查，避免运行时依赖 npm 包。
 - 继续推进第一批维护性优化：`calculator.py` 收缩为兼容导出入口，单 ETF 最新/日度指标迁入 `etf_metrics.py`，窗口级样本过滤、分组累计、覆盖率和质量 payload 迁入 `etf_window.py`；现有服务和测试 import 路径保持兼容，计算口径不变。
 - AI 摘要候选信号评分迁入 `ai_summary_signals.py`，`ai_summary.py` 聚焦缓存、模型调用、解析和规则摘要；后续调整“哪些资金信号值得 DeepSeek 关注”可独立迭代。
 - `scripts/audit_capital_flow_snapshot.py` 默认将审计 JSON 落盘到 `logs/audits/capital_flow_snapshot/`，保留每日数据质量、分类覆盖率和异常行记录；支持 `--no-write-log` 临时只输出。
