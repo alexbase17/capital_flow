@@ -680,6 +680,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(row["net_flow_yi"], 1.19)
         self.assertEqual(row["start_scale_yi"], 3.42)
         self.assertEqual(row["daily_net_flow"], [{"date": "2026-06-10", "value": 0.39}, {"date": "2026-06-11", "value": 0.8}])
+        self.assertEqual(row["daily_change_pct"], [{"date": "2026-06-10", "value": 2.63}, {"date": "2026-06-11", "value": 2.56}])
 
     def test_etf_flow_ratio_uses_window_start_scale(self):
         funds = {

@@ -38,6 +38,8 @@ class EtfFlowGroup:
     close_estimate_count: int = 0
     skipped_flow_count: int = 0
     daily_net_flow_yi: dict[str, float] = field(default_factory=dict)
+    daily_change_weight_yi: dict[str, float] = field(default_factory=dict)
+    daily_change_weighted_sum: dict[str, float] = field(default_factory=dict)
     top_etfs: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -149,8 +151,20 @@ def etf_flows_for_window(
             current_date = window_dates[day_index]
             previous_flow_date = window_dates[day_index + 1]
             current_price = daily_prices[current_date].get(code)
+            previous_price = daily_prices[previous_flow_date].get(code)
             current_share = daily_shares[current_date].get(code)
             previous_share = daily_shares[previous_flow_date].get(code)
+            daily_change_pct = (
+                change_pct_from_close(current_price, previous_price)
+                if current_price is not None and current_price > 0 and current_share is not None
+                else None
+            )
+            if daily_change_pct is not None:
+                daily_scale_yi = current_share * current_price / 10000
+                group.daily_change_weight_yi[current_date] = group.daily_change_weight_yi.get(current_date, 0.0) + daily_scale_yi
+                group.daily_change_weighted_sum[current_date] = (
+                    group.daily_change_weighted_sum.get(current_date, 0.0) + daily_change_pct * daily_scale_yi
+                )
             if current_price is None or current_share is None or previous_share is None or current_price <= 0:
                 skipped_flow_count += 1
                 group.skipped_flow_count += 1
@@ -292,6 +306,11 @@ def group_payload(group: EtfFlowGroup) -> dict[str, Any]:
         "daily_net_flow": [
             {"date": fmt_date(trade_date), "value": round(value, 2)}
             for trade_date, value in sorted(group.daily_net_flow_yi.items())
+        ],
+        "daily_change_pct": [
+            {"date": fmt_date(trade_date), "value": round(group.daily_change_weighted_sum[trade_date] / weight, 2)}
+            for trade_date, weight in sorted(group.daily_change_weight_yi.items())
+            if weight > 0
         ],
         "top_etfs": top_etfs,
         "debug_etfs": debug_etfs,

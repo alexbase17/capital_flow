@@ -124,10 +124,14 @@ function mergeRowsForSection(data, sectionKey) {
         net_flow_ratio: row.net_flow_ratio,
         scale_yi: row.scale_yi,
         start_scale_yi: row.start_scale_yi,
-        daily_net_flow: row.daily_net_flow || []
+        daily_net_flow: row.daily_net_flow || [],
+        daily_change_pct: row.daily_change_pct || []
       };
       if (key === "1d") current.change_pct = row.change_pct;
-      if (key === "60d") current.daily_net_flow = row.daily_net_flow || [];
+      if (key === "60d") {
+        current.daily_net_flow = row.daily_net_flow || [];
+        current.daily_change_pct = row.daily_change_pct || [];
+      }
       rowsByKey.set(keyValue, current);
     });
   });
@@ -139,7 +143,8 @@ function mergeRowsForSection(data, sectionKey) {
       [`ratio_${key}`, row.metrics[key]?.net_flow_ratio ?? null]
     ])),
     scale_yi: row.metrics["1d"]?.scale_yi ?? row.metrics["60d"]?.scale_yi ?? 0,
-    daily_net_flow: row.metrics["60d"]?.daily_net_flow || row.daily_net_flow || []
+    daily_net_flow: row.metrics["60d"]?.daily_net_flow || row.daily_net_flow || [],
+    daily_change_pct: row.metrics["60d"]?.daily_change_pct || row.daily_change_pct || []
   }));
 }
 
@@ -313,6 +318,50 @@ function renderDailyFlowBars(points, label) {
   `;
 }
 
+function renderDailyChangeLine(points, label) {
+  if (!points.length) return '<div class="empty">暂无分天涨跌幅数据</div>';
+  const width = 1040;
+  const height = 180;
+  const plotTop = 10;
+  const plotHeight = 150;
+  const { min, span } = chartDomain(points);
+  const zeroY = plotTop + plotHeight - ((0 - min) / span) * plotHeight;
+  const path = points.map((point, index) => {
+    const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
+    const y = plotTop + plotHeight - ((Number(point.value || 0) - min) / span) * plotHeight;
+    return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const dots = points.map((point, index) => {
+    const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
+    const y = plotTop + plotHeight - ((Number(point.value || 0) - min) / span) * plotHeight;
+    return `
+      <circle class="rolling-point ${flowClass(point.value)}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.2"></circle>
+    `;
+  }).join("");
+  const tooltipValues = points.map((point, index) => ({
+    x: points.length === 1 ? 0.5 : index / (points.length - 1),
+    date: point.date,
+    label: `${point.date} · 涨跌幅 ${fmtPct(point.value)}`
+  }));
+  return `
+    <div class="flow-chart">
+      <div class="chart-title">${label}</div>
+      <div class="flow-chart-body">
+        <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
+          <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
+            <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
+            <path d="${path}" class="flow-line"></path>
+            ${dots}
+          </svg>
+          <div class="chart-hover-layer" aria-hidden="true"></div>
+          <div class="chart-tooltip" aria-hidden="true"></div>
+        </div>
+        ${renderChartRangeTicks(tooltipValues)}
+      </div>
+    </div>
+  `;
+}
+
 function renderRollingFlowLine(points, label) {
   const rollingPoints = rollingWindowPoints(points, 5);
   if (!rollingPoints.length) return '<div class="empty">暂无5日滑动窗口数据</div>';
@@ -360,10 +409,12 @@ function renderRollingFlowLine(points, label) {
 
 function renderFlowChart(row) {
   const points = row.daily_net_flow || [];
-  if (!points.length) return '<div class="empty">暂无60日净申购数据</div>';
+  const changePoints = row.daily_change_pct || [];
+  if (!points.length && !changePoints.length) return '<div class="empty">暂无60日走势数据</div>';
   return `
     <div class="flow-chart-viewport">
       <div class="flow-chart-stack">
+        ${renderDailyChangeLine(changePoints, "分天涨跌幅")}
         ${renderDailyFlowBars(points, "分天净申购金额")}
         ${renderRollingFlowLine(points, "5日滑动窗口净申购金额")}
       </div>

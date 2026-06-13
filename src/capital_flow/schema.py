@@ -42,6 +42,7 @@ REQUIRED_ROW_KEYS = {
     "skipped_flow_count",
     "price_source_label",
     "daily_net_flow",
+    "daily_change_pct",
     "top_etfs",
     "debug_etfs",
 }
