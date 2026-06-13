@@ -137,6 +137,7 @@ def etf_flows_for_window(
             target_etf_count += 1
         else:
             excluded_non_target_etf_count += 1
+            continue
         classified = classify_etf_group(
             name,
             benchmark=benchmark,
@@ -144,8 +145,7 @@ def etf_flows_for_window(
         )
         if not classified:
             continue
-        if is_target:
-            classified_target_etf_count += 1
+        classified_target_etf_count += 1
         section, index_name = classified
         latest_scale_price = scale_price_for_etf(code, close, latest_navs)
         start_scale_price = scale_price_for_etf(code, start_price, start_navs)

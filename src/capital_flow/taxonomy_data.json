@@ -34,6 +34,7 @@
     {"benchmark": "中证红利指数", "section": "strategy", "label": "红利", "market": "A股", "asset_class": "equity", "taxonomy_type": "factor"},
     {"benchmark": "上证红利指数", "section": "strategy", "label": "红利", "market": "A股", "asset_class": "equity", "taxonomy_type": "factor"},
     {"benchmark": "标普中国A股红利100指数", "section": "strategy", "label": "红利", "market": "A股", "asset_class": "equity", "taxonomy_type": "factor"},
+    {"benchmark": "标普中国A股红利机会指数", "section": "strategy", "label": "红利", "market": "A股", "asset_class": "equity", "taxonomy_type": "factor"},
     {"benchmark": "中证港股通高股息投资指数", "section": "strategy", "label": "港股红利", "market": "港股", "asset_class": "equity", "taxonomy_type": "factor"},
     {"benchmark": "恒生港股通中国央企红利指数", "section": "strategy", "label": "港股红利", "market": "港股", "asset_class": "equity", "taxonomy_type": "factor"},
     {"benchmark": "中证全指红利质量指数", "section": "strategy", "label": "红利质量", "market": "A股", "asset_class": "equity", "taxonomy_type": "factor"},

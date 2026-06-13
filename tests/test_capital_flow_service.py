@@ -24,6 +24,7 @@ from src.capital_flow.taxonomy import (
     classify_etf_detail,
     classify_etf_group,
     index_code_for_group,
+    is_target_equity_etf,
     load_taxonomy_records,
 )
 from src.capital_flow.taxonomy_audit import audit_fund_taxonomy
@@ -250,6 +251,47 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(records["中证银行指数"].index_code, "399986.CSI")
         self.assertIn("恒生港股通汽车主题指数", records)
         self.assertEqual(records["沪深300指数"], EXACT_BENCHMARK_RECORDS["沪深300指数"])
+
+    def test_target_equity_uses_exact_taxonomy_before_broad_exclusion_markers(self):
+        self.assertTrue(is_target_equity_etf("标普A股红利ETF华宝", "标普中国A股红利100指数"))
+        self.assertTrue(is_target_equity_etf("标普A股红利ETF华宝", "标普中国A股红利机会指数"))
+        self.assertTrue(is_target_equity_etf("港股低波红利ETF摩根", "标普港股通低波红利指数"))
+        self.assertFalse(is_target_equity_etf("标普500ETF", "标普500指数"))
+
+    def test_etf_flow_excludes_non_target_etfs_even_if_pattern_classifies(self):
+        funds = {
+            "159529.SZ": {
+                "name": "标普消费ETF景顺",
+                "benchmark": "标普500消费精选指数收益率(使用估值汇率调整)",
+                "invest_type": "被动指数型",
+            },
+            "562060.SH": {
+                "name": "标普A股红利ETF华宝",
+                "benchmark": "标普中国A股红利机会指数收益率",
+                "invest_type": "被动指数型",
+            },
+        }
+        payload = _etf_flows_for_window(
+            funds,
+            ["20260611", "20260610"],
+            1,
+            daily_prices={
+                "20260611": {"159529.SZ": 1.0, "562060.SH": 1.0},
+                "20260610": {"159529.SZ": 1.0, "562060.SH": 1.0},
+            },
+            daily_navs={"20260611": {}, "20260610": {}},
+            daily_shares={
+                "20260611": {"159529.SZ": 310000, "562060.SH": 310000},
+                "20260610": {"159529.SZ": 300000, "562060.SH": 300000},
+            },
+        )
+
+        self.assertEqual(payload["coverage"]["target_equity_etf_count"], 1)
+        self.assertEqual(payload["coverage"]["classified_target_equity_etf_count"], 1)
+        self.assertEqual(payload["coverage"]["excluded_non_target_etf_count"], 1)
+        self.assertEqual(payload["sections"]["a_industry"]["rows"], [])
+        self.assertEqual(payload["sections"]["strategy"]["rows"][0]["index_name"], "红利")
+        self.assertEqual(payload["sections"]["strategy"]["rows"][0]["net_flow_yi"], 1.0)
 
     def test_index_name_aliases_support_index_basic_matching(self):
         aliases = index_name_aliases("中证人工智能主题")

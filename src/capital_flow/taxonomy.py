@@ -551,6 +551,9 @@ def is_non_equity_etf(clean_name: str, normalized_benchmark: str) -> bool:
 
 def is_target_equity_etf(clean_name: str, benchmark: str) -> bool:
     normalized_benchmark = normalize_benchmark(benchmark)
+    record = EXACT_BENCHMARK_RECORDS.get(normalized_benchmark)
+    if record is not None:
+        return record.section != "excluded" and record.asset_class == "equity"
     return not any(marker in clean_name or marker in normalized_benchmark for marker in NON_TARGET_ETF_MARKERS)
 
 
