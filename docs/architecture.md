@@ -66,10 +66,12 @@
 
 ## 缓存
 
-本项目有两层缓存：
+本项目有四层缓存：
 
 1. API payload 进程内缓存：`src/capital_flow/policy.py` 中 `ETF_CACHE_SECONDS = 30 * 60`。
-2. TuShare 原始响应文件缓存：`src/capital_flow/fetcher.py` 写入 `data/tushare_cache/`。
+2. API payload 磁盘暖启动缓存：`PAYLOAD_DISK_CACHE_SECONDS = 12 * 60 * 60`，服务重启后优先返回 12 小时内上次成功 payload，并在状态栏提示“使用上次成功缓存”。
+3. AI 摘要缓存：`AI_SUMMARY_CACHE_SECONDS = 24 * 60 * 60`，按“摘要输入哈希 + 模型 + API 地址 + prompt 版本”缓存 DeepSeek 成功结果。
+4. TuShare 原始响应文件缓存：`src/capital_flow/fetcher.py` 写入 `data/tushare_cache/`。
 
 API payload 缓存：
 
@@ -77,6 +79,14 @@ API payload 缓存：
 - 默认 API 请求会使用缓存。
 - `refresh=1` 会强制刷新 payload。
 - 只在当前 Python 进程内存在，服务重启后清空。
+
+AI 摘要缓存：
+
+- 同一份资金流摘要输入、同一模型、同一版 prompt 只请求一次 DeepSeek，后续打开页面直接复用缓存。
+- 数据更新、模型名变更、API 地址变更或 `AI_SUMMARY_PROMPT_VERSION` 变更会自动生成新的缓存 key 并重新请求。
+- `/api/capital-flow/ai-summary?refresh=1` 会跳过 AI 摘要缓存，用于人工强刷。
+- 只缓存 DeepSeek 成功返回的 `source=deepseek`、`status=ready` 结果；失败不缓存，避免长期展示错误状态。
+- 缓存同时写入进程内字典和 `data/tushare_cache/capital_flow_ai_summary/`，服务重启后仍可复用。
 
 TuShare 文件缓存：
 
@@ -98,14 +108,14 @@ TuShare 文件缓存：
 - `selected_window` / `selected_window_label`：当前窗口。
 - `threshold_yi`：行业和策略因子的规模展示阈值，当前为 `20`。
 - `notes`：页面口径提示。
-- `ai_summary`：页面头部摘要，包含 `headline`、`focus_items`、`risks`、`data_quality`、`source` 和 `model`；`focus_items` 使用标题加一到两句自然语言说明，不展示标签；该字段只用于解释展示，不参与任何资金流计算。
+- `ai_summary`：页面头部摘要，包含 `headline`、`focus_items`、`risks`、`data_quality`、`source` 和 `model`；仅当 `source=deepseek` 且有摘要内容时前端展示，`focus_items` 使用纵向列表展示标题和自然语言说明，不展示标签或数据质量文案；该字段只用于解释展示，不参与任何资金流计算。
 
 AI 总结流程：
 
-1. 后端先从完整 payload 压缩出摘要输入，包括各窗口分区净申购、分区 Top 流入/流出、资金/价格/成交三因子候选信号和质量字段。
-2. 未配置 `DEEPSEEK_API_KEY` 时，直接使用本地规则摘要。
-3. 配置 DeepSeek 后，调用兼容 OpenAI chat-completions 的 DeepSeek API；默认模型为 `deepseek-v4-flash`，请求关闭 thinking、启用 JSON 输出，并要求关注点使用短句描述原因，不输出前端标签。
-4. DeepSeek 调用失败、返回非 JSON 或字段不完整时，自动回退本地规则摘要，核心看板数据不受影响。
+1. 后端先从完整 payload 压缩出摘要输入，包括各窗口分区净申购、分区 Top 流入/流出、资金/价格/成交三因子候选信号和质量字段。候选信号使用同窗口字段命名，如 `flow_60d_yi`、`change_60d_pct`、`turnover_60d_avg_pct`，并附带 `metric_notes` 约束模型不要把 1 日涨跌幅误当成 20/60 日同期表现。
+2. 主表接口先返回 `source=none` 的隐藏摘要占位，确保表格不等待模型。
+3. 配置 DeepSeek 后，页面单独调用 AI 摘要接口；默认模型为 `deepseek-v4-flash`，请求关闭 thinking、启用 JSON 输出，并要求从金额、净申购占比、涨跌幅、成交均值占比及其组合异常中筛选最值得关注的 3-5 个信号，说明“为什么值得关注”和“下一步观察什么”。同一数据版本命中 AI 摘要缓存时不会再次请求 DeepSeek。
+4. 未配置 DeepSeek、调用失败、返回非 JSON 或字段不完整时，前端隐藏 AI 总结模块，核心看板数据不受影响。
 
 ETF 分组行除表格指标外还包含展开图序列：
 

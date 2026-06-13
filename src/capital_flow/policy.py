@@ -4,6 +4,8 @@ from __future__ import annotations
 
 
 ETF_CACHE_SECONDS = 30 * 60
+PAYLOAD_DISK_CACHE_SECONDS = 12 * 60 * 60
+AI_SUMMARY_CACHE_SECONDS = 24 * 60 * 60
 FLOW_WINDOWS: tuple[tuple[str, str, int], ...] = (
     ("1d", "1日", 1),
     ("5d", "5日", 5),
@@ -19,4 +21,3 @@ HSGT_UNIT_TO_YI = 0.0001
 SPLIT_FACTORS = (2, 3, 4, 5, 10)
 SPLIT_SHARE_TOLERANCE = 0.12
 SPLIT_PRICE_TOLERANCE = 0.18
-

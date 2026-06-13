@@ -16,7 +16,7 @@
 - 总览表首行展示 5 日成交均值占比，用于辅助观察二级市场日均交易热度。
 - 明细表展示当日涨跌幅、5 日成交均值占比、各窗口净申购、各窗口净申购占比、当日 ETF 规模。
 - 点击明细行可展开 60 日分天涨跌幅、5 日滑动窗口成交均值占比、分天净申购金额和 5 日滑动窗口净申购金额走势。
-- 页面头部展示 AI/规则摘要，基于一级市场净申购、二级市场成交热度和涨跌幅，用短句提炼关键关注点。
+- 页面头部可展示 DeepSeek AI 摘要，基于一级市场净申购、二级市场成交热度和涨跌幅提炼关键关注点；DeepSeek 未返回时不展示该模块。
 - 宽基 ETF、策略因子、A 股行业、港股行业只展示聚合规模合计不低于 20 亿元的项目。
 
 ## 快速接手
@@ -50,11 +50,12 @@ API: http://127.0.0.1:5083/api/capital-flow
 TUSHARE_TOKEN=你的TuShareToken
 DEEPSEEK_API_KEY=可选DeepSeekKey
 DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_TIMEOUT_SECONDS=30
 ```
 
 `TUSHARE_TOKEN` 通过 `src/config_loader.py` 读取。缺失时 API 会返回 502，并提示 `TUSHARE_TOKEN is not set`。
 
-`DEEPSEEK_API_KEY` 可选。配置后，API 会把压缩后的看板关键数据发送给 DeepSeek 生成页面头部摘要；未配置或调用失败时，自动使用本地规则摘要，不影响核心数据展示。默认模型为 `deepseek-v4-flash`，请求使用 JSON 输出并关闭 thinking，以控制延迟和成本；`DEEPSEEK_MODEL` 可按 DeepSeek 当前 API 模型名调整。
+`DEEPSEEK_API_KEY` 可选。配置后，页面会在主表数据加载完成后单独请求 DeepSeek 摘要；未配置或调用失败时隐藏 AI 总结模块，不影响核心数据展示。默认模型为 `deepseek-v4-flash`，请求使用 JSON 输出并关闭 thinking，以控制延迟和成本；`DEEPSEEK_MODEL` 可按 DeepSeek 当前 API 模型名调整。`DEEPSEEK_TIMEOUT_SECONDS` 默认 30 秒，可在 5-60 秒之间调整。
 
 ## 目录结构
 
@@ -62,7 +63,7 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 src/app.py                         Flask app 入口
 src/capital_flow/routes.py          页面和 API 路由
 src/capital_flow/service.py         缓存、窗口选择、API payload 编排
-src/capital_flow/ai_summary.py      AI 总结输入压缩、DeepSeek 调用和规则兜底
+src/capital_flow/ai_summary.py      AI 总结输入压缩、DeepSeek 调用和隐藏兜底
 src/capital_flow/fetcher.py         TuShare 数据拉取
 src/capital_flow/policy.py          窗口、阈值、缓存和拆分识别等口径参数
 src/capital_flow/types.py           计算层共享数据结构
@@ -82,6 +83,7 @@ docs/                               架构、运维、数据源、变更记录
 ## 数据缓存
 
 - 进程内 API payload 缓存 30 分钟。
+- AI 摘要按数据版本、模型和 prompt 版本缓存 24 小时；同一数据版本反复打开页面不会重复请求 DeepSeek。
 - TuShare 原始数据缓存在 `data/tushare_cache/`，该目录不提交 Git。
 - 近期交易日数据缓存 30 分钟，历史交易日数据长期复用；后续日常更新主要补新增交易日。
 - 排障时可设置 `CAPITAL_FLOW_DISABLE_FILE_CACHE=1` 临时绕过文件缓存。

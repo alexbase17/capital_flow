@@ -34,8 +34,11 @@ class CapitalFlowUiContractTests(unittest.TestCase):
         self.assertNotIn("<style>", html)
         self.assertNotIn("onclick=", html)
         self.assertIn("ETF净申购金额", html)
-        self.assertIn('class="data-status" id="dataStatus"', html)
+        self.assertIn('class="data-status" id="dataStatus">资金流向数据加载中...</div>', html)
+        self.assertIn('<div class="flow-cards" id="totalFlowCards"><div class="empty">资金流向数据加载中...</div></div>', html)
+        self.assertIn('<table id="broadTable"><tbody><tr><td class="empty">数据加载中...</td></tr></tbody></table>', html)
         self.assertIn('id="aiSummaryPanel"', html)
+        self.assertIn('id="aiSummaryPanel" aria-label="AI资金流向总结" hidden', html)
         self.assertIn("AI总结", html)
         self.assertLess(
             html.index('class="section-nav"'),
@@ -101,16 +104,64 @@ class CapitalFlowUiContractTests(unittest.TestCase):
         self.assertEqual(response.get_json(), payload)
         service.assert_called_once_with(force_refresh=False, window_key=None)
 
+    def test_capital_flow_ai_summary_api_uses_cached_payload(self):
+        payload = {"etf": {"latest_date": "2026-06-11"}, "window_payloads": {}}
+        summary = {
+            "status": "ready",
+            "source": "deepseek",
+            "headline": "资金流向分化",
+            "focus_items": [],
+            "risks": [],
+            "data_quality": "数据正常",
+        }
+        with patch("src.capital_flow.routes.capital_flow_payload", return_value=payload) as service, patch(
+            "src.capital_flow.routes.capital_flow_ai_summary", return_value=summary
+        ) as ai_summary:
+            response = self.client.get("/api/capital-flow/ai-summary?window=5d")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"ai_summary": summary})
+        service.assert_called_once_with(force_refresh=False, window_key="5d")
+        ai_summary.assert_called_once_with(payload, use_deepseek=True, use_cache=True)
+
+    def test_capital_flow_ai_summary_api_bypasses_ai_cache_on_refresh(self):
+        payload = {"etf": {"latest_date": "2026-06-11"}, "window_payloads": {}}
+        summary = {
+            "status": "ready",
+            "source": "deepseek",
+            "headline": "资金流向分化",
+            "focus_items": [],
+            "risks": [],
+            "data_quality": "",
+        }
+        with patch("src.capital_flow.routes.capital_flow_payload", return_value=payload) as service, patch(
+            "src.capital_flow.routes.capital_flow_ai_summary", return_value=summary
+        ) as ai_summary:
+            response = self.client.get("/api/capital-flow/ai-summary?refresh=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"ai_summary": summary})
+        service.assert_called_once_with(force_refresh=True, window_key=None)
+        ai_summary.assert_called_once_with(payload, use_deepseek=True, use_cache=False)
+
     def test_capital_flow_static_scripts_render_expected_sections(self):
         html = (ROOT_DIR / "src" / "templates" / "capital_flow.html").read_text(encoding="utf-8")
         script = self.static_text("capital_flow.js")
         css = self.static_text("capital_flow.css")
 
         self.assertIn('"/api/capital-flow"', script)
+        self.assertIn("/api/capital-flow/ai-summary?", script)
         self.assertNotIn("refresh=1", script)
         self.assertIn("function renderTotalFlow", script)
         self.assertIn("function renderDataStatus", script)
         self.assertIn("function renderAiSummary", script)
+        self.assertIn("function loadDeepSeekSummary", script)
+        self.assertIn("loadDeepSeekSummary(data)", script)
+        self.assertIn("DeepSeek摘要加载失败，隐藏AI总结", script)
+        self.assertIn('summary.source === "deepseek"', script)
+        self.assertIn("panel.hidden = !shouldShow", script)
+        self.assertIn('source.textContent = summary.model || "";', script)
+        self.assertNotIn('const sourceLabel = "DeepSeek"', script)
         self.assertIn("ai_summary", script)
         self.assertNotIn("ai-summary-tags", script)
         self.assertIn("function yiFractionDigits", script)
@@ -137,8 +188,22 @@ class CapitalFlowUiContractTests(unittest.TestCase):
         self.assertIn("价格日", script)
         self.assertIn("份额日", script)
         self.assertIn("净申购估值", script)
-        self.assertIn(".ai-summary-grid", css)
+        self.assertIn("使用上次成功缓存", script)
+        self.assertIn(".ai-summary-list", css)
+        self.assertIn(".ai-summary-list { display: grid; gap: 16px; }", css)
+        self.assertIn("font-size: 13.6px", css)
+        self.assertIn("color: #243244", css)
+        self.assertIn(".ai-summary-source { color: #667386; font-size: 12px; font-weight: 400; }", css)
+        self.assertNotIn(".ai-summary-risks", css)
+        self.assertNotIn(".ai-summary-item::before", css)
+        self.assertNotIn("max-width: 920px", css)
+        self.assertNotIn(".ai-summary-item:first-child", css)
+        self.assertNotIn(".ai-summary-item { min-width: 0; padding: 10px 0; border-top", css)
+        self.assertNotIn(".ai-summary-grid", css)
+        self.assertNotIn(".ai-summary-foot", css)
         self.assertNotIn(".ai-summary-tags", css)
+        self.assertIn('status.status === "fallback" ? " warning" : ""', script)
+        self.assertNotIn('status.payload_cache_status === "stale" ? " warning"', script)
         self.assertIn("已回退到最近完整交易日", script)
         self.assertIn("北上资金", script)
         self.assertIn("南下资金", script)

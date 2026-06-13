@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from src.capital_flow import fetcher
+from src.capital_flow import fetcher, service
 from src.capital_flow.calculator import (
     EtfFlowGroup,
     change_pct_from_close,
@@ -43,6 +43,7 @@ from src.capital_flow.taxonomy_exposure import (
     resolve_index_code,
     sw2021_exposure_from_weight_rows,
 )
+from src.tushare_client import TushareUnavailable
 
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -81,6 +82,56 @@ def core_accounting_snapshot(payload):
         "quality": payload["quality"],
         "broad_rows": [row_snapshot(row) for row in payload["sections"]["broad"]["rows"]],
         "a_industry_rows": [row_snapshot(row) for row in payload["sections"]["a_industry"]["rows"]],
+    }
+
+
+def minimal_valid_capital_flow_payload(window_key: str = "1d"):
+    data_status = {
+        "status": "ready",
+        "as_of_date": "2026-06-11",
+        "price_date": "2026-06-11",
+        "share_date": "2026-06-11",
+        "nav_date": "2026-06-11",
+        "is_aligned": True,
+    }
+    sections = {
+        "broad": {"title": "宽基", "rows": []},
+        "strategy": {"title": "策略", "rows": []},
+        "a_industry": {"title": "A股", "rows": []},
+        "hk_industry": {"title": "港股", "rows": []},
+    }
+    return {
+        "data_status": {"etf": dict(data_status), "north_south": {}},
+        "north_south": {"latest_date": "2026-06-11", "previous_date": "2026-06-10", "rows": []},
+        "etf": {
+            "latest_date": "2026-06-11",
+            "previous_date": "2026-06-10",
+            "nav_date": "2026-06-11",
+            "data_status": dict(data_status),
+            "coverage": {},
+            "quality": {},
+            "sections": sections,
+        },
+        "windows": {},
+        "default_window": "1d",
+        "selected_window": window_key,
+        "selected_window_label": "1日",
+        "window_payloads": {
+            window_key: {
+                "north_south": {"latest_date": "2026-06-11", "previous_date": "2026-06-11", "rows": []},
+                "etf": {"data_status": dict(data_status), "sections": sections},
+            }
+        },
+        "threshold_yi": 20,
+        "notes": [],
+        "ai_summary": {
+            "status": "ready",
+            "source": "rules",
+            "headline": "资金流向分化",
+            "focus_items": [],
+            "risks": [],
+            "data_quality": "数据质量正常",
+        },
     }
 
 
@@ -239,6 +290,33 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(daily_navs["20250102"]["589270.SH"], 1.1)
         self.assertNotIn("589270.SH", daily_navs["20250101"])
 
+    def test_fill_missing_navs_tolerates_history_rate_limit(self):
+        daily_navs = {"20250103": {}, "20250102": {}}
+        with patch("src.capital_flow.service.fund_nav_history_map", side_effect=TushareUnavailable("rate limit")):
+            backfilled_count = fill_missing_navs(
+                object(),
+                daily_navs,
+                fund_dates=["20250103", "20250102"],
+                required_codes={"510300.SH"},
+                daily_prices={"20250103": {"510300.SH": 4.0}, "20250102": {"510300.SH": 3.9}},
+            )
+
+        self.assertEqual(backfilled_count, 0)
+        self.assertEqual(daily_navs, {"20250103": {}, "20250102": {}})
+
+    def test_fill_missing_adj_factors_tolerates_history_rate_limit(self):
+        daily_adj_factors = {"20250103": {}, "20250102": {}}
+        with patch("src.capital_flow.service.fund_adj_history_map", side_effect=TushareUnavailable("rate limit")):
+            fill_missing_adj_factors(
+                object(),
+                daily_adj_factors,
+                fund_dates=["20250103", "20250102"],
+                required_codes={"510300.SH"},
+                daily_prices={"20250103": {"510300.SH": 4.0}, "20250102": {"510300.SH": 3.9}},
+            )
+
+        self.assertEqual(daily_adj_factors, {"20250103": {}, "20250102": {}})
+
     def test_fetcher_cache_can_be_disabled_for_diagnostics(self):
         class FakeClient:
             def __init__(self):
@@ -258,6 +336,38 @@ class CapitalFlowServiceTests(unittest.TestCase):
             self.assertEqual(fetcher.fund_daily_map(client, "20250102"), {"510300.SH": 6.0})
 
         self.assertEqual(client.calls, 2)
+
+    def test_capital_flow_payload_uses_stale_payload_cache_when_refresh_fails(self):
+        payload = minimal_valid_capital_flow_payload("5d")
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)),
+            patch("src.capital_flow.service._build_capital_flow_payload", side_effect=RuntimeError("fund_nav rate limit")),
+        ):
+            service._CACHE["payloads"].clear()
+            service.write_payload_cache("5d", payload)
+
+            result = service.capital_flow_payload(force_refresh=True, client=object(), window_key="5d")
+
+        self.assertEqual(result["data_status"]["etf"]["payload_cache_status"], "stale")
+        self.assertIn("fund_nav rate limit", result["data_status"]["etf"]["payload_cache_error"])
+        self.assertIn("上次成功生成", result["notes"][0])
+
+    def test_capital_flow_payload_uses_recent_disk_payload_on_warm_start(self):
+        payload = minimal_valid_capital_flow_payload("5d")
+        with (
+            TemporaryDirectory() as tmpdir,
+            patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)),
+            patch("src.capital_flow.service._build_capital_flow_payload") as build_payload,
+        ):
+            service._CACHE["payloads"].clear()
+            service.write_payload_cache("5d", payload)
+
+            result = service.capital_flow_payload(force_refresh=False, client=object(), window_key="5d")
+
+        build_payload.assert_not_called()
+        self.assertEqual(result["data_status"]["etf"]["payload_cache_status"], "stale")
+        self.assertEqual(result["data_status"]["etf"]["payload_cache_error"], "service warm start")
 
     def test_classifies_broad_a_share_etfs(self):
         self.assertEqual(

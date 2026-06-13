@@ -17,9 +17,11 @@ from src.capital_flow.policy import (
     FLOW_WINDOWS,
     FUND_DATE_LOOKBACK_BUFFER,
     MIN_INDEX_SCALE_YI,
+    PAYLOAD_DISK_CACHE_SECONDS,
     RECENT_SHARE_REQUIRED_LOOKBACK,
 )
 from src.capital_flow.fetcher import (
+    cache_file_path,
     fund_adj_history_map,
     fund_adj_map,
     fund_basic_map,
@@ -27,8 +29,10 @@ from src.capital_flow.fetcher import (
     fund_nav_history_map,
     fund_nav_map,
     fund_share_map,
+    read_cache,
     recent_fund_daily_dates,
     recent_hsgt_rows,
+    write_cache,
 )
 from src.capital_flow.schema import validate_capital_flow_payload
 from src.capital_flow.taxonomy import is_target_equity_etf
@@ -48,9 +52,49 @@ def capital_flow_payload(
     cached = _CACHE["payloads"].get(cache_key)
     if not force_refresh and cached is not None and now < cached["expires_at"]:
         return cached["payload"]
-    payload = _build_capital_flow_payload(client or TushareClient.from_env(), selected_window)
+    if not force_refresh and cached is None:
+        warm_payload = read_payload_cache(cache_key, max_age_seconds=PAYLOAD_DISK_CACHE_SECONDS)
+        if warm_payload is not None:
+            payload = mark_payload_cache_fallback(warm_payload, "service warm start")
+            validate_capital_flow_payload(payload)
+            _CACHE["payloads"][cache_key] = {"expires_at": now + ETF_CACHE_SECONDS, "payload": payload}
+            return payload
+    try:
+        payload = _build_capital_flow_payload(client or TushareClient.from_env(), selected_window)
+    except Exception as exc:
+        stale_payload = read_payload_cache(cache_key)
+        if stale_payload is None:
+            raise
+        payload = mark_payload_cache_fallback(stale_payload, str(exc))
+        validate_capital_flow_payload(payload)
+        _CACHE["payloads"][cache_key] = {"expires_at": now + ETF_CACHE_SECONDS, "payload": payload}
+        return payload
     validate_capital_flow_payload(payload)
+    write_payload_cache(cache_key, payload)
     _CACHE["payloads"][cache_key] = {"expires_at": now + ETF_CACHE_SECONDS, "payload": payload}
+    return payload
+
+
+def payload_cache_key(window_key: str) -> str:
+    return f"capital_flow_payload/{window_key}"
+
+
+def read_payload_cache(window_key: str, *, max_age_seconds: int | None = None) -> dict[str, Any] | None:
+    payload = read_cache(cache_file_path(payload_cache_key(window_key)), max_age_seconds=max_age_seconds)
+    return payload if isinstance(payload, dict) else None
+
+
+def write_payload_cache(window_key: str, payload: dict[str, Any]) -> None:
+    write_cache(cache_file_path(payload_cache_key(window_key)), payload)
+
+
+def mark_payload_cache_fallback(payload: dict[str, Any], error: str) -> dict[str, Any]:
+    data_status = payload.setdefault("data_status", {}).setdefault("etf", {})
+    data_status["payload_cache_status"] = "stale"
+    data_status["payload_cache_error"] = error
+    notes = payload.setdefault("notes", [])
+    if isinstance(notes, list):
+        notes.insert(0, "本次外部数据刷新失败，页面暂用上次成功生成的资金流 payload。")
     return payload
 
 
@@ -84,7 +128,14 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
     daily_prices = {trade_date: candidate_prices[trade_date] for trade_date in fund_dates}
     daily_amounts = {trade_date: candidate_amounts[trade_date] for trade_date in fund_dates}
     daily_shares = {trade_date: candidate_shares[trade_date] for trade_date in fund_dates}
-    daily_navs = {trade_date: fund_nav_map(client, trade_date) for trade_date in fund_dates[:-1]}
+    daily_navs = {}
+    nav_fetch_error_count = 0
+    for trade_date in fund_dates[:-1]:
+        try:
+            daily_navs[trade_date] = fund_nav_map(client, trade_date)
+        except TushareUnavailable:
+            daily_navs[trade_date] = {}
+            nav_fetch_error_count += 1
     nav_backfilled_count = fill_missing_navs(
         client,
         daily_navs,
@@ -92,7 +143,14 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
         required_codes=required_codes,
         daily_prices=daily_prices,
     )
-    daily_adj_factors = {trade_date: fund_adj_map(client, trade_date) for trade_date in fund_dates}
+    daily_adj_factors = {}
+    adj_fetch_error_count = 0
+    for trade_date in fund_dates:
+        try:
+            daily_adj_factors[trade_date] = fund_adj_map(client, trade_date)
+        except TushareUnavailable:
+            daily_adj_factors[trade_date] = {}
+            adj_fetch_error_count += 1
     fill_missing_adj_factors(
         client,
         daily_adj_factors,
@@ -104,6 +162,8 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
         **etf_status,
         "nav_date": fmt_date(fund_dates[0]) if daily_navs.get(fund_dates[0]) else None,
         "nav_backfilled_count": nav_backfilled_count,
+        "nav_fetch_error_count": nav_fetch_error_count,
+        "adj_fetch_error_count": adj_fetch_error_count,
     }
     window_payloads = {}
     for window_config in FLOW_WINDOWS:
@@ -149,7 +209,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
             "总览并列展示不同资金来源，不直接加总；宽基被动 ETF 排除增强、价值、成长、红利低波等策略变体；宽基、策略因子、A 股行业和港股行业均只展示聚合规模不低于 20 亿元的项目；A 股行业和港股行业只按跟踪指数归类，未匹配到标准指数规则的 ETF 不纳入行业聚合。",
         ],
     }
-    payload["ai_summary"] = capital_flow_ai_summary(payload)
+    payload["ai_summary"] = capital_flow_ai_summary(payload, use_deepseek=False)
     return payload
 
 
@@ -295,7 +355,10 @@ def fill_missing_adj_factors(
     start_date = fund_dates[-1]
     end_date = fund_dates[0]
     for code in sorted(missing_codes):
-        history = fund_adj_history_map(client, code, start_date=start_date, end_date=end_date)
+        try:
+            history = fund_adj_history_map(client, code, start_date=start_date, end_date=end_date)
+        except TushareUnavailable:
+            break
         for trade_date, factor in history.items():
             if (
                 trade_date in daily_adj_factors
@@ -328,7 +391,10 @@ def fill_missing_navs(
     end_date = fund_dates[0]
     backfilled_count = 0
     for code in sorted(missing_codes):
-        history = fund_nav_history_map(client, code, start_date=start_date, end_date=end_date)
+        try:
+            history = fund_nav_history_map(client, code, start_date=start_date, end_date=end_date)
+        except TushareUnavailable:
+            break
         for trade_date, unit_nav in history.items():
             if (
                 trade_date in daily_navs

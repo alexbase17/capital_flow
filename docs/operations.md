@@ -41,6 +41,9 @@ python3 -m venv .venv
 
 ```env
 TUSHARE_TOKEN=你的TuShareToken
+DEEPSEEK_API_KEY=可选DeepSeekKey
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_TIMEOUT_SECONDS=30
 ```
 
 安全要求：
@@ -134,7 +137,21 @@ API：
 curl --noproxy '*' -sS -o /tmp/capital_flow.json -w '%{http_code}\n' http://127.0.0.1:5083/api/capital-flow
 ```
 
-期望 HTTP 状态码均为 `200`。API 首次请求可能需要等待 TuShare 返回数据。
+期望 HTTP 状态码均为 `200`。成功生成的主 payload 会落盘缓存；服务重启后若 12 小时内存在上次成功 payload，API 会先快速返回缓存并在页面状态栏提示“使用上次成功缓存”。如果后续 TuShare 短时限流或网络失败，API 也会返回上次成功 payload，避免整页空白。
+
+AI 摘要单独验证：
+
+```bash
+curl --noproxy '*' -sS -o /tmp/capital_flow_ai_summary.json -w '%{http_code}\n' http://127.0.0.1:5083/api/capital-flow/ai-summary
+```
+
+`/api/capital-flow` 不同步等待 DeepSeek，只返回核心表格数据和隐藏摘要占位；`/api/capital-flow/ai-summary` 会在主表加载后单独调用 DeepSeek，默认等待 30 秒。若 DeepSeek key、余额、网络或模型名异常，页面会隐藏 AI 总结模块，表格不应空白。
+
+AI 摘要成功返回后会按数据版本缓存 24 小时；同一份资金流摘要输入、同一模型和同一版 prompt 反复打开页面不会重复请求 DeepSeek。若底层数据更新、模型或 prompt 变化，会自动重新请求。需要人工强刷时使用：
+
+```bash
+curl --noproxy '*' -sS -o /tmp/capital_flow_ai_summary.json -w '%{http_code}\n' 'http://127.0.0.1:5083/api/capital-flow/ai-summary?refresh=1'
+```
 
 ## 项目验证
 
@@ -236,19 +253,19 @@ curl --noproxy '*' -sS http://127.0.0.1:5083/api/capital-flow
 - `etf.quality`
 - `etf.sections`
 
-### AI 总结仍显示“规则摘要”
+### AI 总结不显示
 
 可能原因：
 
 - `.env.local` 未配置 `DEEPSEEK_API_KEY`。
 - DeepSeek 余额、权限、网络或限流异常。
-- 模型返回非 JSON 或字段不完整，后端自动回退到规则摘要。
+- 模型返回非 JSON 或字段不完整，后端返回隐藏摘要占位。
 
 检查：
 
 ```bash
 .venv/bin/python -c "from src.config_loader import get_config; print(bool(get_config('DEEPSEEK_API_KEY')))"
-curl --noproxy '*' -sS http://127.0.0.1:5083/api/capital-flow
+curl --noproxy '*' -sS http://127.0.0.1:5083/api/capital-flow/ai-summary
 ```
 
 配置或修改 `.env.local` 后需要重启服务：

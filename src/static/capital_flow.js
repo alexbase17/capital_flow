@@ -139,38 +139,41 @@ function renderDataStatus(data) {
   if (status.status === "fallback") {
     parts.push("已回退到最近完整交易日");
   }
+  if (status.payload_cache_status === "stale") {
+    parts.push("使用上次成功缓存");
+  }
   el.textContent = parts.join(" · ");
   el.className = `data-status${status.status === "fallback" ? " warning" : ""}`;
 }
 
 function renderAiSummary(data) {
+  const panel = document.getElementById("aiSummaryPanel");
   const body = document.getElementById("aiSummaryBody");
   const source = document.getElementById("aiSummarySource");
   if (!body) return;
   const summary = data?.ai_summary || {};
   const focusItems = Array.isArray(summary.focus_items) ? summary.focus_items : [];
-  const risks = Array.isArray(summary.risks) ? summary.risks : [];
-  const sourceLabel = summary.source === "deepseek" ? "DeepSeek" : "规则摘要";
-  if (source) {
-    source.textContent = summary.model ? `${sourceLabel} · ${summary.model}` : sourceLabel;
+  const shouldShow = summary.source === "deepseek" && (summary.headline || focusItems.length);
+  if (panel) {
+    panel.hidden = !shouldShow;
   }
-  if (!summary.headline && !focusItems.length) {
-    body.innerHTML = '<div class="empty">暂无AI总结</div>';
+  if (!shouldShow) {
+    body.innerHTML = "";
+    if (source) source.textContent = "";
     return;
   }
+  if (source) {
+    source.textContent = summary.model || "";
+  }
   body.innerHTML = `
-    <div class="ai-summary-headline">${escapeHtml(summary.headline || "资金流向分化，关注持续性")}</div>
-    <div class="ai-summary-grid">
+    ${summary.headline ? `<div class="ai-summary-headline">${escapeHtml(summary.headline)}</div>` : ""}
+    <div class="ai-summary-list">
       ${focusItems.map(item => `
         <div class="ai-summary-item">
           <div class="ai-summary-item-title">${escapeHtml(item.title || "")}</div>
           <div class="ai-summary-item-detail">${escapeHtml(item.detail || "")}</div>
         </div>
       `).join("")}
-    </div>
-    <div class="ai-summary-foot">
-      <span>${escapeHtml(summary.data_quality || "")}</span>
-      ${risks.length ? `<span>${risks.map(item => escapeHtml(item)).join("；")}</span>` : ""}
     </div>
   `;
 }
@@ -695,9 +698,28 @@ async function loadCapitalFlow() {
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     latestCapitalFlowData = data;
     renderCapitalFlow(data);
+    loadDeepSeekSummary(data);
   } catch (err) {
     console.error("资金流向加载失败", err);
     document.getElementById("totalFlowCards").innerHTML = `<div class="empty">资金流向加载失败：${err.message}</div>`;
+  }
+}
+
+async function loadDeepSeekSummary(data) {
+  const params = new URLSearchParams();
+  if (data?.selected_window) {
+    params.set("window", data.selected_window);
+  }
+  try {
+    const response = await fetch(`/api/capital-flow/ai-summary?${params.toString()}`);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+    if (payload?.ai_summary?.source === "deepseek") {
+      latestCapitalFlowData = { ...latestCapitalFlowData, ai_summary: payload.ai_summary };
+      renderAiSummary(latestCapitalFlowData);
+    }
+  } catch (err) {
+    console.warn("DeepSeek摘要加载失败，隐藏AI总结", err);
   }
 }
 
