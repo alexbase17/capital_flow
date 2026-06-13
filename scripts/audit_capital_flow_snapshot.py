@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +24,18 @@ def main() -> int:
     parser.add_argument("--window", default="1d", help="Payload cache window key to audit")
     parser.add_argument("--max-items", type=int, default=12, help="Maximum suspicious rows to print")
     parser.add_argument("--fail-on-warning", action="store_true", help="Exit non-zero when warnings are found")
+    parser.add_argument(
+        "--output-dir",
+        default=str(ROOT_DIR / "logs" / "audits" / "capital_flow_snapshot"),
+        help="Directory for persisted audit JSON records",
+    )
+    parser.add_argument("--no-write-log", action="store_true", help="Print only; do not persist an audit JSON file")
     args = parser.parse_args()
 
     payload = load_payload(args.window)
     audit = audit_payload(payload, max_items=args.max_items)
+    if not args.no_write_log:
+        audit["output_path"] = str(write_audit_log(audit, output_dir=Path(args.output_dir), window_key=args.window))
     print(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True))
     return 1 if args.fail_on_warning and audit["warning_count"] else 0
 
@@ -74,6 +83,7 @@ def audit_payload(payload: dict[str, Any], *, max_items: int) -> dict[str, Any]:
         warnings.append("suspicious high-magnitude flow or turnover rows found")
 
     return {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
         "as_of_date": etf.get("latest_date"),
         "payload_schema_version": payload.get("payload_schema_version"),
         "warning_count": len(warnings),
@@ -87,6 +97,15 @@ def audit_payload(payload: dict[str, Any], *, max_items: int) -> dict[str, Any]:
         },
         "suspicious_rows": suspicious_rows,
     }
+
+
+def write_audit_log(audit: dict[str, Any], *, output_dir: Path, window_key: str) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    as_of_date = str(audit.get("as_of_date") or "unknown").replace("-", "")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = output_dir / f"{as_of_date}_{window_key}_{timestamp}.json"
+    path.write_text(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
 
 
 def iter_window_rows(payload: dict[str, Any]):

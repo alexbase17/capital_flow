@@ -2,6 +2,9 @@
 
 ## 2026-06-14
 
+- 继续推进第一批维护性优化：`calculator.py` 收缩为兼容导出入口，单 ETF 最新/日度指标迁入 `etf_metrics.py`，窗口级样本过滤、分组累计、覆盖率和质量 payload 迁入 `etf_window.py`；现有服务和测试 import 路径保持兼容，计算口径不变。
+- AI 摘要候选信号评分迁入 `ai_summary_signals.py`，`ai_summary.py` 聚焦缓存、模型调用、解析和规则摘要；后续调整“哪些资金信号值得 DeepSeek 关注”可独立迭代。
+- `scripts/audit_capital_flow_snapshot.py` 默认将审计 JSON 落盘到 `logs/audits/capital_flow_snapshot/`，保留每日数据质量、分类覆盖率和异常行记录；支持 `--no-write-log` 临时只输出。
 - 修复前端入口重复初始化问题：`capital_flow.js` 改为 DOM ready 后只执行一次 `setupSectionNav()` 和 `loadCapitalFlow()`，避免重复请求、半初始化状态和页面偶发加载失败；UI 契约测试新增重复初始化保护。
 - 新增页面资源烟测 `scripts/verify_dashboard_page.py`，验证首页实际下发的 6 个拆分 JS、脚本顺序、入口单次初始化、静态资源可访问和 `/api/capital-flow` 可渲染，用于捕捉“页面只有标题/加载失败”类问题。
 - 继续优化长期维护性：服务层 `_build_capital_flow_payload` 拆出市场输入准备、NAV/复权因子加载、多窗口 payload 组装和口径说明；AI 总结 prompt 拆到 `ai_summary_prompt.py`，以后调提示词不再混入缓存/解析逻辑。

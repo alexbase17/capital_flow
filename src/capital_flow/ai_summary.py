@@ -8,6 +8,16 @@ import re
 from typing import Any
 
 from src.capital_flow.ai_summary_prompt import deepseek_summary_request_payload
+from src.capital_flow.ai_summary_signals import (
+    SECTION_LABELS,
+    WINDOW_KEYS,
+    compact_quality,
+    compact_row_metrics,
+    metric_notes,
+    section_leaders,
+    section_totals,
+    signal_candidates,
+)
 from src.capital_flow.fetcher import cache_file_path, read_cache, write_cache
 from src.capital_flow.policy import AI_SUMMARY_CACHE_SECONDS
 from src.config_loader import get_config
@@ -18,13 +28,6 @@ DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 DEFAULT_DEEPSEEK_TIMEOUT_SECONDS = 30
 AI_SUMMARY_PROMPT_VERSION = "2026-06-14.1"
-WINDOW_KEYS = ("1d", "5d", "20d", "60d")
-SECTION_LABELS = {
-    "broad": "宽基",
-    "a_industry": "A股行业",
-    "hk_industry": "港股行业",
-    "strategy": "策略因子",
-}
 _AI_SUMMARY_CACHE: dict[str, dict[str, Any]] = {}
 
 
@@ -298,198 +301,6 @@ def merged_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 )
                 current["metrics"][window_key] = compact_row_metrics(row)
     return list(rows_by_key.values())
-
-
-def compact_row_metrics(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "flow_yi": row.get("net_flow_yi"),
-        "flow_ratio_pct": row.get("net_flow_ratio"),
-        "change_window_pct": compounded_change_pct(row.get("daily_change_pct") or []),
-        "turnover_window_avg_pct": row.get("turnover_ratio"),
-        "scale_yi": row.get("scale_yi"),
-        "skipped_flow_count": row.get("skipped_flow_count"),
-        "close_estimate_count": row.get("close_estimate_count"),
-    }
-
-
-def metric_notes() -> dict[str, str]:
-    return {
-        "flow_Xd_yi": "近X个交易日一级市场ETF净申购金额，单位亿元；X可为1、5、20、60。",
-        "flow_ratio_Xd_pct": "近X个交易日净申购金额 / 窗口期初ETF规模，对应表格中的净申购占比。",
-        "change_Xd_pct": "近X个交易日复权涨跌幅，由窗口内分天涨跌幅复利合成；只可与同窗口flow_Xd_yi表述为同期。",
-        "turnover_Xd_avg_pct": "近X个交易日逐日场内成交额 / 当日期初ETF规模后取均值，对应成交均值占比。",
-        "same_window_rule": "只有相同X窗口的flow、change、turnover才能称为同期、共振或背离；禁止用1日涨跌幅解释20日或60日资金。",
-        "cross_window_rule": "跨窗口比较只能表述为短线与中期/长期趋势对照，例如5日回流但60日仍流出。",
-    }
-
-
-def compounded_change_pct(points: list[dict[str, Any]]) -> float | None:
-    if not points:
-        return None
-    factor = 1.0
-    has_value = False
-    for point in points:
-        value = nullable_number(point.get("value"))
-        if value is None:
-            continue
-        factor *= 1 + value / 100
-        has_value = True
-    return round((factor - 1) * 100, 2) if has_value else None
-
-
-def signal_candidates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    candidates = []
-    for row in rows:
-        metrics = row.get("metrics") or {}
-        metric_1d = metrics.get("1d") or {}
-        metric_5d = metrics.get("5d") or {}
-        metric_20d = metrics.get("20d") or {}
-        metric_60d = metrics.get("60d") or {}
-        flow_1d = number(metric_1d.get("flow_yi"))
-        flow_5d = number(metric_5d.get("flow_yi"))
-        flow_20d = number(metric_20d.get("flow_yi"))
-        flow_60d = number(metric_60d.get("flow_yi"))
-        flow_ratio_1d = nullable_number(metric_1d.get("flow_ratio_pct"))
-        flow_ratio_5d = nullable_number(metric_5d.get("flow_ratio_pct"))
-        flow_ratio_20d = nullable_number(metric_20d.get("flow_ratio_pct"))
-        flow_ratio_60d = nullable_number(metric_60d.get("flow_ratio_pct"))
-        change_1d = nullable_number(metric_1d.get("change_window_pct"))
-        change_5d = nullable_number(metric_5d.get("change_window_pct"))
-        change_20d = nullable_number(metric_20d.get("change_window_pct"))
-        change_60d = nullable_number(metric_60d.get("change_window_pct"))
-        turnover_1d = nullable_number(metric_1d.get("turnover_window_avg_pct"))
-        turnover_5d = nullable_number(metric_5d.get("turnover_window_avg_pct"))
-        turnover_20d = nullable_number(metric_20d.get("turnover_window_avg_pct"))
-        turnover_60d = nullable_number(metric_60d.get("turnover_window_avg_pct"))
-        score = abs(flow_5d) + abs(flow_20d) * 0.4 + abs(flow_60d) * 0.15
-        if turnover_5d is not None:
-            score += min(turnover_5d, 20) * 3
-        tags = []
-        if flow_5d > 0 and flow_20d > 0:
-            tags.append("连续流入")
-        if flow_5d < 0 and flow_20d < 0:
-            tags.append("持续流出")
-        if flow_5d > 0 and flow_20d < 0:
-            tags.append("短线回流")
-        if flow_5d < 0 and flow_20d > 0:
-            tags.append("短线转弱")
-        if flow_5d > 0 and change_5d is not None and change_5d > 0:
-            tags.append("价格确认")
-        if flow_5d > 0 and change_5d is not None and change_5d < 0:
-            tags.append("逆势承接")
-        if turnover_5d is not None and turnover_5d >= 5:
-            tags.append("成交活跃")
-        if not tags and abs(flow_5d) < 1:
-            continue
-        direction = "positive" if flow_5d >= 0 else "negative"
-        title = signal_title(str(row["name"]), flow_5d, flow_20d, flow_60d)
-        candidates.append(
-            {
-                "section": row.get("section_label"),
-                "name": row.get("name"),
-                "title": title,
-                "direction": direction,
-                "score": round(score, 2),
-                "flow_1d_yi": round(flow_1d, 2),
-                "flow_5d_yi": round(flow_5d, 2),
-                "flow_20d_yi": round(flow_20d, 2),
-                "flow_60d_yi": round(flow_60d, 2),
-                "flow_ratio_1d_pct": round(flow_ratio_1d, 2) if flow_ratio_1d is not None else None,
-                "flow_ratio_5d_pct": round(flow_ratio_5d, 2) if flow_ratio_5d is not None else None,
-                "flow_ratio_20d_pct": round(flow_ratio_20d, 2) if flow_ratio_20d is not None else None,
-                "flow_ratio_60d_pct": round(flow_ratio_60d, 2) if flow_ratio_60d is not None else None,
-                "change_1d_pct": round(change_1d, 2) if change_1d is not None else None,
-                "change_5d_pct": round(change_5d, 2) if change_5d is not None else None,
-                "change_20d_pct": round(change_20d, 2) if change_20d is not None else None,
-                "change_60d_pct": round(change_60d, 2) if change_60d is not None else None,
-                "turnover_1d_avg_pct": round(turnover_1d, 2) if turnover_1d is not None else None,
-                "turnover_5d_avg_pct": round(turnover_5d, 2) if turnover_5d is not None else None,
-                "turnover_20d_avg_pct": round(turnover_20d, 2) if turnover_20d is not None else None,
-                "turnover_60d_avg_pct": round(turnover_60d, 2) if turnover_60d is not None else None,
-                "scale_yi": metric_1d.get("scale_yi") or metric_60d.get("scale_yi"),
-                "tags": tags[:4],
-            }
-        )
-    return sorted(candidates, key=lambda item: item["score"], reverse=True)
-
-
-def compact_quality(payload: dict[str, Any]) -> dict[str, Any]:
-    etf = payload.get("window_payloads", {}).get("60d", {}).get("etf") or payload.get("etf", {})
-    quality = etf.get("quality") or {}
-    data_status = etf.get("data_status") or {}
-    coverage = etf.get("coverage") or {}
-    return {
-        "as_of_date": etf.get("latest_date"),
-        "price_date": data_status.get("price_date"),
-        "share_date": data_status.get("share_date"),
-        "nav_date": data_status.get("nav_date"),
-        "required_etf_count": data_status.get("required_etf_count"),
-        "payload_cache_status": data_status.get("payload_cache_status"),
-        "payload_cache_error": data_status.get("payload_cache_error"),
-        "nav_backfilled_count": data_status.get("nav_backfilled_count"),
-        "nav_estimate_ratio_pct": quality.get("nav_estimate_ratio_pct"),
-        "skipped_flow_count": quality.get("skipped_flow_count"),
-        "split_adjusted_count": quality.get("split_adjusted_count"),
-        "scale_audit": quality.get("scale_audit"),
-        "target_coverage_pct": coverage.get("target_coverage_pct"),
-    }
-
-
-def signal_title(name: str, flow_5d: float, flow_20d: float, flow_60d: float) -> str:
-    if flow_5d > 0 and flow_20d < 0 and flow_60d < 0:
-        return f"{name}短线回流"
-    if flow_5d < 0 and flow_20d > 0:
-        return f"{name}短线转弱"
-    if flow_5d > 0 and flow_20d > 0:
-        return f"{name}持续流入"
-    if flow_5d < 0 and flow_20d < 0:
-        return f"{name}持续流出"
-    return f"{name}{'流入' if flow_5d >= 0 else '流出'}"
-
-
-def section_totals(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    totals = []
-    for window_key in WINDOW_KEYS:
-        window_payload = payload.get("window_payloads", {}).get(window_key, {})
-        north_south = window_payload.get("north_south", {}).get("rows") or []
-        for row in north_south:
-            totals.append({"window": window_key, "name": row.get("name"), "flow_yi": row.get("net_change_yi")})
-        sections = window_payload.get("etf", {}).get("sections", {})
-        for section_key, section in sections.items():
-            total = sum(number(row.get("net_flow_yi")) for row in section.get("rows") or [])
-            totals.append(
-                {
-                    "window": window_key,
-                    "name": SECTION_LABELS.get(section_key, section_key),
-                    "flow_yi": round(total, 2),
-                }
-            )
-    return totals
-
-
-def section_leaders(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    leaders = []
-    for window_key in WINDOW_KEYS:
-        sections = payload.get("window_payloads", {}).get(window_key, {}).get("etf", {}).get("sections", {})
-        for section_key, section in sections.items():
-            rows = list(section.get("rows") or [])
-            if not rows:
-                continue
-            for direction, reverse in (("inflow", True), ("outflow", False)):
-                row = sorted(rows, key=lambda item: number(item.get("net_flow_yi")), reverse=reverse)[0]
-                leaders.append(
-                    {
-                        "window": window_key,
-                        "section": SECTION_LABELS.get(section_key, section_key),
-                        "direction": direction,
-                        "name": row.get("display_name") or row.get("index_name"),
-                        "flow_yi": row.get("net_flow_yi"),
-                        "flow_ratio_pct": row.get("net_flow_ratio"),
-                        "change_window_pct": compounded_change_pct(row.get("daily_change_pct") or []),
-                        "turnover_window_avg_pct": row.get("turnover_ratio"),
-                    }
-                )
-    return leaders
 
 
 def number(value: Any) -> float:

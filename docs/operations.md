@@ -195,7 +195,13 @@ scripts/validate_taxonomy_data.py --audit --sample-limit 5
 scripts/audit_capital_flow_snapshot.py --max-items 12
 ```
 
-该脚本读取最近成功的 `capital_flow_payload` 缓存，输出 stale 缓存、NAV 估算占比、跳过流量点、分类覆盖率和大额/高占比/高成交均值占比异常行。默认只提示，不会阻断服务；上线前如希望发现 warning 即失败，可加 `--fail-on-warning`。
+该脚本读取最近成功的 `capital_flow_payload` 缓存，输出 stale 缓存、NAV 估算占比、跳过流量点、分类覆盖率和大额/高占比/高成交均值占比异常行。默认会把完整审计 JSON 写入：
+
+```text
+logs/audits/capital_flow_snapshot/
+```
+
+如只想临时查看、不落盘，可加 `--no-write-log`。默认 warning 不会阻断服务；上线前如希望发现 warning 即失败，可加 `--fail-on-warning`。
 
 `scripts/start_web.sh`、`scripts/verify_fast.sh` 和 `scripts/verify_all.sh` 共享 `scripts/lib_env.sh`：
 

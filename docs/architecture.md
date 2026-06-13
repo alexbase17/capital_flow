@@ -45,11 +45,14 @@
 | `src/capital_flow/service.py` | 缓存、窗口选择、TuShare 拉取编排、payload 校验；服务层已拆出市场输入准备、多窗口 payload 组装和口径说明 |
 | `src/capital_flow/ai_summary.py` | AI 总结缓存、结构化输入、DeepSeek 调用、输出规范化和本地规则兜底 |
 | `src/capital_flow/ai_summary_prompt.py` | DeepSeek system/task/schema/example prompt 构造，便于独立调优提示词 |
+| `src/capital_flow/ai_summary_signals.py` | AI 摘要输入中的候选信号、分区 totals/leaders 和同窗口口径说明 |
 | `src/capital_flow/observability.py` | 后台结构化日志事件，当前记录 payload 缓存命中、回退和构建完成状态 |
 | `src/capital_flow/fetcher.py` | 按接口封装 TuShare 数据读取 |
 | `src/capital_flow/policy.py` | 统一维护窗口、规模阈值、缓存 TTL、份额拆分识别容差等口径参数 |
 | `src/capital_flow/types.py` | 计算层共享的 TypedDict/dataclass 数据结构 |
-| `src/capital_flow/calculator.py` | ETF 净申购、规模、涨跌幅、成交均值占比的窗口主流程 |
+| `src/capital_flow/calculator.py` | 计算层兼容导出入口，保留历史 import 路径 |
+| `src/capital_flow/etf_metrics.py` | 单 ETF 静态信息、最新日指标、日度净申购/涨跌幅/成交分母和规模审计计算 |
+| `src/capital_flow/etf_window.py` | ETF 窗口级循环、样本过滤、分组累计、覆盖率/质量 payload 组装 |
 | `src/capital_flow/grouping.py` | ETF 分组聚合、top/debug ETF 明细、规模归因审计和行 payload 组装 |
 | `src/capital_flow/price_math.py` | ETF NAV/收盘价取价、复权涨跌幅、份额拆分/折算识别和可比价格计算 |
 | `src/capital_flow/north_south.py` | 北上/南下资金窗口聚合 |
@@ -203,7 +206,7 @@ scripts/validate_taxonomy_data.py --audit --sample-limit 5
 scripts/audit_capital_flow_snapshot.py --max-items 12
 ```
 
-该脚本读取最近成功 payload 缓存，提示 stale 缓存、NAV 估算占比、跳过日度点、分类覆盖率和大额/高占比/高成交均值占比异常行；默认只输出审计信息，不阻断页面。
+该脚本读取最近成功 payload 缓存，提示 stale 缓存、NAV 估算占比、跳过日度点、分类覆盖率和大额/高占比/高成交均值占比异常行；默认会把审计 JSON 落盘到 `logs/audits/capital_flow_snapshot/`，不阻断页面。
 
 ## 变更建议
 
