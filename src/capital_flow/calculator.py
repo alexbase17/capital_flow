@@ -222,10 +222,18 @@ def etf_flows_for_window(
         )
 
     sections = {
-        "broad": section_payload(groups, "broad", "宽基被动ETF净申购金额", min_scale_yi=None),
-        "a_industry": section_payload(groups, "a_industry", "A股行业净申购金额", min_scale_yi=MIN_INDEX_SCALE_YI),
-        "hk_industry": section_payload(groups, "hk_industry", "港股行业净申购金额", min_scale_yi=MIN_INDEX_SCALE_YI),
-        "strategy": section_payload(groups, "strategy", "策略因子ETF净申购金额", min_scale_yi=MIN_INDEX_SCALE_YI),
+        "broad": section_payload(
+            groups, "broad", "宽基被动ETF净申购金额", min_scale_yi=MIN_INDEX_SCALE_YI, window_days=window_days
+        ),
+        "a_industry": section_payload(
+            groups, "a_industry", "A股行业净申购金额", min_scale_yi=MIN_INDEX_SCALE_YI, window_days=window_days
+        ),
+        "hk_industry": section_payload(
+            groups, "hk_industry", "港股行业净申购金额", min_scale_yi=MIN_INDEX_SCALE_YI, window_days=window_days
+        ),
+        "strategy": section_payload(
+            groups, "strategy", "策略因子ETF净申购金额", min_scale_yi=MIN_INDEX_SCALE_YI, window_days=window_days
+        ),
     }
     return {
         "latest_date": fmt_date(latest_date),
@@ -285,9 +293,10 @@ def section_payload(
     section: str,
     title: str,
     min_scale_yi: float | None,
+    window_days: int | None = None,
 ) -> dict[str, Any]:
     rows = [
-        group_payload(group)
+        group_payload(group, window_days=window_days)
         for (group_section, _), group in groups.items()
         if group_section == section and (min_scale_yi is None or group.scale_yi >= min_scale_yi)
     ]
@@ -295,9 +304,10 @@ def section_payload(
     return {"title": title, "rows": rows}
 
 
-def group_payload(group: EtfFlowGroup) -> dict[str, Any]:
+def group_payload(group: EtfFlowGroup, *, window_days: int | None = None) -> dict[str, Any]:
     top_etfs = sorted(group.top_etfs, key=lambda item: item["scale_yi"], reverse=True)[:5]
     debug_etfs = sorted(group.top_etfs, key=lambda item: abs(item["net_flow_yi"]), reverse=True)[:10]
+    turnover_days = window_days or len(group.daily_turnover_yi)
     return {
         "index_name": group.index_name,
         "display_name": DISPLAY_INDEX_NAMES.get(group.index_name, group.index_name),
@@ -308,8 +318,8 @@ def group_payload(group: EtfFlowGroup) -> dict[str, Any]:
         "net_flow_yi": round(group.net_flow_yi, 2),
         "net_flow_ratio": round(group.net_flow_yi / group.start_scale_yi * 100, 2) if group.start_scale_yi else None,
         "turnover_yi": round(sum(group.daily_turnover_yi.values()), 2),
-        "turnover_ratio": round(sum(group.daily_turnover_yi.values()) / group.start_scale_yi * 100, 2)
-        if group.daily_turnover_yi and group.start_scale_yi
+        "turnover_ratio": round(sum(group.daily_turnover_yi.values()) / turnover_days / group.start_scale_yi * 100, 2)
+        if group.daily_turnover_yi and group.start_scale_yi and turnover_days
         else None,
         "scale_yi": round(group.scale_yi, 2),
         "start_scale_yi": round(group.start_scale_yi, 2),

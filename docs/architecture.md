@@ -30,7 +30,7 @@
 
 `/api/capital-flow` 支持参数：
 
-- `window=1d|3d|5d|20d|60d`：选择页面主窗口；返回体仍包含全部窗口的总览数据。
+- `window=1d|5d|20d|60d`：选择页面主窗口；返回体仍包含全部窗口的总览数据。
 - `refresh=1`：跳过进程内 payload 缓存并重新编排结果；仍会复用 TuShare 文件缓存。
 
 ## 后端模块
@@ -44,7 +44,7 @@
 | `src/capital_flow/routes.py` | 页面路由和 API 路由 |
 | `src/capital_flow/service.py` | 缓存、窗口选择、TuShare 拉取编排、payload 校验 |
 | `src/capital_flow/fetcher.py` | 按接口封装 TuShare 数据读取 |
-| `src/capital_flow/calculator.py` | 北上/南下资金、ETF 净申购、规模、涨跌幅、成交额占比计算 |
+| `src/capital_flow/calculator.py` | 北上/南下资金、ETF 净申购、规模、涨跌幅、成交均值占比计算 |
 | `src/capital_flow/taxonomy_data.json` | ETF 精确指数分类主数据，记录 market、asset_class、taxonomy_type、parent_bucket 等后台字段 |
 | `src/capital_flow/taxonomy.py` | ETF 分类归一化、优先级、主数据读取和关键词兜底 |
 | `src/capital_flow/taxonomy_audit.py` | ETF 分类覆盖率、分类来源、置信度和未分类样本审计 |
@@ -89,7 +89,7 @@ TuShare 文件缓存：
 - `north_south`：当前窗口北上/南下资金。
 - `etf`：当前窗口 ETF 数据，包括 `sections`、`coverage`、`quality`。
 - `data_status`：当前窗口数据状态，包含 ETF 价格/份额日期对齐信息和北上/南下最新日期。
-- `window_payloads`：`1d / 3d / 5d / 20d / 60d` 全部窗口数据，用于总览矩阵。
+- `window_payloads`：`1d / 5d / 20d / 60d` 全部窗口数据，用于总览矩阵。
 - `windows`：窗口配置。
 - `default_window`：默认窗口，当前为 `1d`。
 - `selected_window` / `selected_window_label`：当前窗口。
@@ -99,7 +99,7 @@ TuShare 文件缓存：
 ETF 分组行除表格指标外还包含展开图序列：
 
 - `daily_change_pct`：窗口内每日规模加权涨跌幅，用于“分天涨跌幅”走势图。
-- `daily_turnover`：窗口内每日成交额和对应日度期初规模，用于“5日滑动窗口成交额占比”走势图。
+- `daily_turnover`：窗口内每日成交额和对应日度期初规模，用于“5日滑动窗口成交均值占比”走势图。
 - `daily_net_flow`：窗口内每日净申购金额，用于“分天净申购金额”和“5日滑动窗口净申购金额”走势图。
 
 ETF 数据状态字段：

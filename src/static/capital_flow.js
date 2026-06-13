@@ -1,7 +1,8 @@
 const moneyFmt = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const sectionIds = ["total", "broad", "a_industry", "hk_industry", "strategy"];
-const windowKeys = ["1d", "3d", "5d", "20d", "60d"];
-const windowLabels = { "1d": "1日", "3d": "3日", "5d": "5日", "20d": "20日", "60d": "60日" };
+const windowKeys = ["1d", "5d", "20d", "60d"];
+const windowLabels = { "1d": "1日", "5d": "5日", "20d": "20日", "60d": "60日" };
+const windowTradeLabels = { "1d": "近1个交易日", "5d": "近5个交易日", "20d": "近20个交易日", "60d": "近60个交易日" };
 const tableSortState = {};
 const defaultTableSort = { key: "flow_1d", order: "desc" };
 let latestCapitalFlowData = null;
@@ -52,7 +53,8 @@ function sectionTurnoverRatio(data, key, sectionKey) {
   const rows = sectionRows(data, key, sectionKey).filter(row => row.turnover_ratio !== null && row.turnover_ratio !== undefined);
   const turnover = sumBy(rows, "turnover_yi");
   const startScale = sumBy(rows, "start_scale_yi");
-  return startScale ? turnover / startScale * 100 : null;
+  const days = Number(windowPayload(data, key)?.days || 0);
+  return startScale && days ? turnover / days / startScale * 100 : null;
 }
 
 function renderTotalFlow(data) {
@@ -60,7 +62,7 @@ function renderTotalFlow(data) {
   const columns = [
     ["北上资金", key => hsgtValue(data, key, "北上资金")],
     ["南下资金", key => hsgtValue(data, key, "南下资金")],
-    ["宽基被动ETF", key => sectionValue(data, key, "broad")],
+    ["宽基被动ETF(>=20亿)", key => sectionValue(data, key, "broad")],
     ["A股行业(>=20亿)", key => sectionValue(data, key, "a_industry")],
     ["港股行业(>=20亿)", key => sectionValue(data, key, "hk_industry")],
     ["策略因子(>=20亿)", key => sectionValue(data, key, "strategy")]
@@ -72,7 +74,7 @@ function renderTotalFlow(data) {
         ${columns.map(([title]) => `<div role="columnheader">${title}</div>`).join("")}
       </div>
       <div class="flow-matrix-row" role="row">
-        <div class="window-cell" role="cell">5日成交额占比</div>
+        <div class="window-cell" role="cell">5日成交均值占比</div>
         <div class="matrix-value muted" role="cell">--</div>
         <div class="matrix-value muted" role="cell">--</div>
         ${["broad", "a_industry", "hk_industry", "strategy"].map(sectionKey => {
@@ -82,7 +84,7 @@ function renderTotalFlow(data) {
       </div>
       ${windowKeys.map(key => `
         <div class="flow-matrix-row" role="row">
-          <div class="window-cell" role="cell">${windowLabels[key]}</div>
+          <div class="window-cell" role="cell">${windowTradeLabels[key]}</div>
           ${columns.map(([, getter]) => {
             const value = getter(key);
             return `<div class="matrix-value ${flowClass(value)}" role="cell">${fmtYi(value)}</div>`;
@@ -178,6 +180,10 @@ function sortableHeader(tableId, key, label, help = "") {
   return `<button class="sort-button${active ? " active" : ""}" data-sort-key="${key}" data-next-order="${nextOrder}"${active ? ` data-sort-order="${order}"` : ""} type="button">${label}</button>${helpTip}`;
 }
 
+function windowHeader(tableId, key, metric, labelSuffix) {
+  return sortableHeader(tableId, `${metric}_${key}`, `${windowLabels[key]}${labelSuffix}`);
+}
+
 function sortedRows(tableId, rows) {
   const state = tableSortState[tableId] || defaultTableSort;
   const direction = state.order === "asc" ? 1 : -1;
@@ -258,7 +264,7 @@ function rollingTurnoverRatioPoints(points, windowSize = 5) {
       date: point.date,
       start_date: windowPoints[0]?.date || "",
       end_date: point.date,
-      value: startScale > 0 ? value / startScale * 100 : null
+      value: startScale > 0 ? value / windowPoints.length / startScale * 100 : null
     };
   }).filter(point => point.value !== null);
 }
@@ -285,9 +291,9 @@ function nearestTooltipIndex(ratio, items) {
 
 function renderDailyFlowBars(points, label) {
   const width = 1040;
-  const height = 180;
-  const plotTop = 10;
-  const plotHeight = 150;
+  const height = 126;
+  const plotTop = 8;
+  const plotHeight = 104;
   const { min, span } = chartDomain(points);
   const zeroY = plotTop + plotHeight - ((0 - min) / span) * plotHeight;
   const slot = width / Math.max(points.length, 1);
@@ -328,9 +334,9 @@ function renderDailyFlowBars(points, label) {
 function renderDailyChangeLine(points, label) {
   if (!points.length) return '<div class="empty">暂无分天涨跌幅数据</div>';
   const width = 1040;
-  const height = 180;
-  const plotTop = 10;
-  const plotHeight = 150;
+  const height = 126;
+  const plotTop = 8;
+  const plotHeight = 104;
   const { min, span } = chartDomain(points);
   const zeroY = plotTop + plotHeight - ((0 - min) / span) * plotHeight;
   const path = points.map((point, index) => {
@@ -368,14 +374,15 @@ function renderDailyChangeLine(points, label) {
   `;
 }
 
-function renderLineChart(points, label, valueLabel, formatter = fmtYi) {
+function renderLineChart(points, label, valueLabel, formatter = fmtYi, options = {}) {
   if (!points.length) return '<div class="empty">暂无走势数据</div>';
   const width = 1040;
-  const height = 180;
-  const plotTop = 10;
-  const plotHeight = 150;
+  const height = 126;
+  const plotTop = 8;
+  const plotHeight = 104;
   const { min, span } = chartDomain(points);
   const zeroY = plotTop + plotHeight - ((0 - min) / span) * plotHeight;
+  const titleStyle = options.alignTitleCenter ? "" : ` style="--zero-y: ${zeroY.toFixed(1)}px"`;
   const path = points.map((point, index) => {
     const x = points.length === 1 ? 0 : (index / (points.length - 1)) * width;
     const y = plotTop + plotHeight - ((Number(point.value || 0) - min) / span) * plotHeight;
@@ -395,11 +402,11 @@ function renderLineChart(points, label, valueLabel, formatter = fmtYi) {
   }));
   return `
     <div class="flow-chart">
-      <div class="chart-title" style="--zero-y: ${zeroY.toFixed(1)}px">${label}</div>
+      <div class="chart-title${options.alignTitleCenter ? " center" : ""}"${titleStyle}>${label}</div>
       <div class="flow-chart-body">
         <div class="flow-chart-plot" data-chart-tooltips='${tooltipPayload(JSON.stringify(tooltipValues))}'>
           <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(label)}">
-            <line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>
+            ${options.hideZeroLine ? "" : `<line x1="0" y1="${zeroY.toFixed(1)}" x2="${width}" y2="${zeroY.toFixed(1)}" class="zero-line"></line>`}
             <path d="${path}" class="flow-line"></path>
             ${dots}
           </svg>
@@ -419,8 +426,8 @@ function renderRollingFlowLine(points, label) {
 
 function renderRollingTurnoverRatioLine(points, label) {
   const rollingPoints = rollingTurnoverRatioPoints(points, 5);
-  if (!rollingPoints.length) return '<div class="empty">暂无5日滑动成交额占比数据</div>';
-  return renderLineChart(rollingPoints, label, "成交额占比", fmtPct);
+  if (!rollingPoints.length) return '<div class="empty">暂无5日滑动成交均值占比数据</div>';
+  return renderLineChart(rollingPoints, label, "成交均值占比", fmtPct, { hideZeroLine: true, alignTitleCenter: true });
 }
 
 function renderFlowChart(row) {
@@ -432,7 +439,7 @@ function renderFlowChart(row) {
     <div class="flow-chart-viewport">
       <div class="flow-chart-stack">
         ${renderDailyChangeLine(changePoints, "分天涨跌幅")}
-        ${renderRollingTurnoverRatioLine(turnoverPoints, "5日滑动窗口成交额占比")}
+        ${renderRollingTurnoverRatioLine(turnoverPoints, "5日滑动窗口成交均值占比")}
         ${renderDailyFlowBars(points, "分天净申购金额")}
         ${renderRollingFlowLine(points, "5日滑动窗口净申购金额")}
       </div>
@@ -457,8 +464,14 @@ function bindChartTooltips(scope) {
       const item = items[index] || {};
       const x = Math.min(0.98, Math.max(0.02, Number(item.x ?? ratio)));
       tooltip.textContent = item.label || "";
-      tooltip.style.left = `${x * 100}%`;
       tooltip.classList.add("visible");
+      const margin = 8;
+      const tooltipWidth = Math.min(tooltip.offsetWidth, rect.width - margin * 2);
+      const leftPx = Math.min(
+        rect.width - tooltipWidth / 2 - margin,
+        Math.max(tooltipWidth / 2 + margin, x * rect.width)
+      );
+      tooltip.style.left = `${leftPx}px`;
     });
     plot.addEventListener("pointerleave", () => {
       tooltip.classList.remove("visible");
@@ -466,8 +479,30 @@ function bindChartTooltips(scope) {
   });
 }
 
+function bindNameTooltips(scope) {
+  scope.querySelectorAll(".name-cell[data-name-tooltip]").forEach(cell => {
+    const text = cell.querySelector(".name-text");
+    const isOverflowing = text ? text.scrollWidth > text.clientWidth + 1 : false;
+    cell.classList.toggle("has-name-tooltip", isOverflowing);
+  });
+}
+
 function metricCell(value, formatter = fmtYi) {
   return `<td class="num ${flowClass(value)}">${formatter(value)}</td>`;
+}
+
+function expandedRowScrollOffset(table) {
+  const tableHeadHeight = table?.tHead?.getBoundingClientRect?.().height || 34;
+  return pxVar("--capital-header-height", 60) + pxVar("--capital-section-nav-height", 62) + tableHeadHeight - 1;
+}
+
+function scrollExpandedRowIntoView(tableId, key) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  const row = [...table.querySelectorAll(".data-row")].find(item => item.dataset.rowKey === key);
+  if (!row) return;
+  const top = row.getBoundingClientRect().top + window.scrollY - expandedRowScrollOffset(table);
+  window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
 }
 
 function renderTable(tableId, sectionKey) {
@@ -483,10 +518,10 @@ function renderTable(tableId, sectionKey) {
     <thead>
       <tr>
         <th>指数 / 主题</th>
-        <th class="num-head">${sortableHeader(tableId, "change_pct", "当日涨跌幅", "当日涨跌幅为该指数或主题下 ETF 最新交易日相对上一交易日的规模加权涨跌幅。")}</th>
-        <th class="num-head">${sortableHeader(tableId, "turnover_5d", "5日成交额占比", "近5个交易日场内成交额合计 / 窗口期初 ETF 规模，用于观察二级市场交易热度，不等同于一级市场净申购资金流。")}</th>
-        ${windowKeys.map(key => `<th class="num-head">${sortableHeader(tableId, `flow_${key}`, `${windowLabels[key]}净申购`, "按窗口内每日 ETF 份额日期相邻差逐日乘以同日单位净值后累加；同日净值缺失时用当日收盘价估算。正数表示净申购，负数表示净赎回。")}</th>`).join("")}
-        ${windowKeys.map(key => `<th class="num-head">${sortableHeader(tableId, `ratio_${key}`, `${windowLabels[key]}净申购占比`, "净申购占比 = 对应窗口净申购金额 / 窗口期初 ETF 规模。期初规模按该窗口起点交易日的份额和收盘价估算，用于衡量资金流入强度。")}</th>`).join("")}
+        <th class="num-head">${sortableHeader(tableId, "change_pct", "当日涨跌幅")}</th>
+        <th class="num-head">${sortableHeader(tableId, "turnover_5d", "5日成交均值占比")}</th>
+        ${windowKeys.map(key => `<th class="num-head">${windowHeader(tableId, key, "flow", "净申购")}</th>`).join("")}
+        ${windowKeys.map(key => `<th class="num-head">${windowHeader(tableId, key, "ratio", "净申购占比")}</th>`).join("")}
         <th class="num-head">${sortableHeader(tableId, "scale_yi", "当日ETF规模")}</th>
       </tr>
     </thead>
@@ -494,9 +529,12 @@ function renderTable(tableId, sectionKey) {
       ${displayRows.map(row => {
         const key = rowKey(row);
         const expanded = Boolean(expandedRows[tableId]?.[key]);
+        const displayName = formatIndexName(row);
         return `
           <tr class="data-row${expanded ? " expanded" : ""}" data-row-key="${key}" tabindex="0">
-            <td class="name-cell"><span class="expand-mark">${expanded ? "−" : "+"}</span>${formatIndexName(row)}</td>
+            <td class="name-cell" data-name-tooltip="${escapeHtml(displayName)}">
+              <span class="expand-mark">${expanded ? "−" : "+"}</span><span class="name-text">${displayName}</span>
+            </td>
             ${metricCell(row.change_pct, fmtPct)}
             ${metricCell(row.turnover_5d, fmtPct)}
             ${windowKeys.map(key => metricCell(row[`flow_${key}`])).join("")}
@@ -519,12 +557,17 @@ function renderTable(tableId, sectionKey) {
     });
   });
   bindChartTooltips(table);
+  bindNameTooltips(table);
 }
 
 function toggleRow(tableId, sectionKey, key) {
   expandedRows[tableId] = expandedRows[tableId] || {};
-  expandedRows[tableId][key] = !expandedRows[tableId][key];
+  const shouldExpand = !expandedRows[tableId][key];
+  expandedRows[tableId][key] = shouldExpand;
   renderTable(tableId, sectionKey);
+  if (shouldExpand) {
+    window.requestAnimationFrame(() => scrollExpandedRowIntoView(tableId, key));
+  }
 }
 
 function setActiveSection(sectionId) {

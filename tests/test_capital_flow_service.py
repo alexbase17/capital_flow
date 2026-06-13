@@ -14,7 +14,13 @@ from src.capital_flow.service import (
     _section_payload,
 )
 from src.capital_flow.schema import validate_capital_flow_payload
-from src.capital_flow.taxonomy import EXACT_BENCHMARK_RECORDS, classify_etf_detail, classify_etf_group, load_taxonomy_records
+from src.capital_flow.taxonomy import (
+    EXACT_BENCHMARK_RECORDS,
+    classify_etf_detail,
+    classify_etf_group,
+    index_code_for_group,
+    load_taxonomy_records,
+)
 from src.capital_flow.taxonomy_audit import audit_fund_taxonomy
 from src.capital_flow.taxonomy_exposure import (
     a_share_benchmark_impacts,
@@ -105,6 +111,10 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertGreater(len(records), 100)
         self.assertEqual(records["沪深300指数"].section, "broad")
         self.assertEqual(records["沪深300指数"].index_code, "000300.SH")
+        self.assertEqual(records["深证50指数"].index_code, "399850.SZ")
+        self.assertEqual(records["国证2000指数"].index_code, "399303.SZ")
+        self.assertEqual(records["中证800指数"].index_code, "000906.SH")
+        self.assertEqual(records["中小企业100指数"].index_code, "399005.SZ")
         self.assertEqual(records["中证金融科技主题指数"].taxonomy_type, "theme")
         self.assertEqual(records["中证金融科技主题指数"].parent_bucket, "科技")
         self.assertEqual(records["中证全指证券公司指数"].index_code, "h20168.CSI")
@@ -255,10 +265,12 @@ class CapitalFlowServiceTests(unittest.TestCase):
             classify_etf_group("深证50ETF易方达", benchmark="深证50指数收益率", invest_type="被动指数型"),
             ("broad", "深证50"),
         )
+        self.assertEqual(index_code_for_group("broad", "深证50"), "399850.SZ")
         self.assertEqual(
             classify_etf_group("国证2000ETF博时", benchmark="国证2000指数收益率", invest_type="被动指数型"),
             ("broad", "国证2000"),
         )
+        self.assertEqual(index_code_for_group("broad", "国证2000"), "399303.SZ")
 
     def test_classification_does_not_fall_back_to_fund_name_when_benchmark_missing(self):
         self.assertIsNone(classify_etf_group("沪深300ETF华泰柏瑞"))
@@ -557,7 +569,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 section="broad",
                 index_name="沪深300",
                 index_code="000300.SH",
-                scale_yi=2,
+                scale_yi=12,
                 net_flow_yi=1,
             ),
             ("a_industry", "小行业"): EtfFlowGroup(section="a_industry", index_name="小行业", scale_yi=2, net_flow_yi=1),
@@ -568,7 +580,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
             ("a_industry", "电力"): EtfFlowGroup(section="a_industry", index_name="电力", scale_yi=30, net_flow_yi=1.5),
         }
 
-        broad_rows = _section_payload(groups, "broad", "宽基ETF净申购金额", min_scale_yi=None)["rows"]
+        broad_rows = _section_payload(groups, "broad", "宽基ETF净申购金额", min_scale_yi=10)["rows"]
         industry_rows = _section_payload(groups, "a_industry", "A股行业净申购金额", min_scale_yi=10)["rows"]
 
         self.assertEqual([row["index_name"] for row in broad_rows], ["沪深300"])
@@ -656,7 +668,7 @@ class CapitalFlowServiceTests(unittest.TestCase):
             },
             daily_navs={"20260611": {}},
             daily_shares={
-                "20260611": {"510300.SH": 10000},
+                "20260611": {"510300.SH": 60000},
                 "20260610": {},
             },
         )
@@ -685,9 +697,9 @@ class CapitalFlowServiceTests(unittest.TestCase):
             },
             daily_navs={"20260611": {}, "20260610": {}},
             daily_shares={
-                "20260611": {"510300.SH": 12000},
-                "20260610": {"510300.SH": 10000},
-                "20260609": {"510300.SH": 9000},
+                "20260611": {"510300.SH": 120000},
+                "20260610": {"510300.SH": 100000},
+                "20260609": {"510300.SH": 90000},
             },
             daily_amounts={
                 "20260611": {"510300.SH": 2.0},
@@ -696,17 +708,17 @@ class CapitalFlowServiceTests(unittest.TestCase):
         )
 
         row = payload["sections"]["broad"]["rows"][0]
-        self.assertEqual(row["net_flow_yi"], 1.19)
-        self.assertEqual(row["start_scale_yi"], 3.42)
+        self.assertEqual(row["net_flow_yi"], 11.9)
+        self.assertEqual(row["start_scale_yi"], 34.2)
         self.assertEqual(row["turnover_yi"], 3.0)
-        self.assertEqual(row["turnover_ratio"], 87.72)
-        self.assertEqual(row["daily_net_flow"], [{"date": "2026-06-10", "value": 0.39}, {"date": "2026-06-11", "value": 0.8}])
+        self.assertEqual(row["turnover_ratio"], 4.39)
+        self.assertEqual(row["daily_net_flow"], [{"date": "2026-06-10", "value": 3.9}, {"date": "2026-06-11", "value": 8.0}])
         self.assertEqual(row["daily_change_pct"], [{"date": "2026-06-10", "value": 2.63}, {"date": "2026-06-11", "value": 2.56}])
         self.assertEqual(
             row["daily_turnover"],
             [
-                {"date": "2026-06-10", "value": 1.0, "start_scale_yi": 3.42},
-                {"date": "2026-06-11", "value": 2.0, "start_scale_yi": 3.9},
+                {"date": "2026-06-10", "value": 1.0, "start_scale_yi": 34.2},
+                {"date": "2026-06-11", "value": 2.0, "start_scale_yi": 39.0},
             ],
         )
 
@@ -728,15 +740,15 @@ class CapitalFlowServiceTests(unittest.TestCase):
             },
             daily_navs={"20260611": {}},
             daily_shares={
-                "20260611": {"510300.SH": 20000},
-                "20260610": {"510300.SH": 10000},
+                "20260611": {"510300.SH": 400000},
+                "20260610": {"510300.SH": 200000},
             },
         )
 
         row = payload["sections"]["broad"]["rows"][0]
-        self.assertEqual(row["net_flow_yi"], 2.0)
-        self.assertEqual(row["scale_yi"], 4.0)
-        self.assertEqual(row["start_scale_yi"], 1.0)
+        self.assertEqual(row["net_flow_yi"], 40.0)
+        self.assertEqual(row["scale_yi"], 80.0)
+        self.assertEqual(row["start_scale_yi"], 20.0)
         self.assertEqual(row["net_flow_ratio"], 200.0)
 
     def test_aligned_fund_dates_uses_latest_complete_price_share_date(self):
