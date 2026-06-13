@@ -96,13 +96,13 @@ TuShare 文件缓存：
 - `selected_window` / `selected_window_label`：当前窗口。
 - `threshold_yi`：行业和策略因子的规模展示阈值，当前为 `20`。
 - `notes`：页面口径提示。
-- `ai_summary`：页面头部摘要，包含 `headline`、`focus_items`、`risks`、`data_quality`、`source` 和 `model`；该字段只用于解释展示，不参与任何资金流计算。
+- `ai_summary`：页面头部摘要，包含 `headline`、`focus_items`、`risks`、`data_quality`、`source` 和 `model`；`focus_items` 使用标题加一到两句自然语言说明，不展示标签；该字段只用于解释展示，不参与任何资金流计算。
 
 AI 总结流程：
 
 1. 后端先从完整 payload 压缩出摘要输入，包括各窗口分区净申购、分区 Top 流入/流出、资金/价格/成交三因子候选信号和质量字段。
 2. 未配置 `DEEPSEEK_API_KEY` 时，直接使用本地规则摘要。
-3. 配置 DeepSeek 后，调用兼容 OpenAI chat-completions 的 DeepSeek API，要求模型只输出固定 JSON。
+3. 配置 DeepSeek 后，调用兼容 OpenAI chat-completions 的 DeepSeek API；默认模型为 `deepseek-v4-flash`，请求关闭 thinking、启用 JSON 输出，并要求关注点使用短句描述原因，不输出前端标签。
 4. DeepSeek 调用失败、返回非 JSON 或字段不完整时，自动回退本地规则摘要，核心看板数据不受影响。
 
 ETF 分组行除表格指标外还包含展开图序列：

@@ -236,6 +236,27 @@ curl --noproxy '*' -sS http://127.0.0.1:5083/api/capital-flow
 - `etf.quality`
 - `etf.sections`
 
+### AI 总结仍显示“规则摘要”
+
+可能原因：
+
+- `.env.local` 未配置 `DEEPSEEK_API_KEY`。
+- DeepSeek 余额、权限、网络或限流异常。
+- 模型返回非 JSON 或字段不完整，后端自动回退到规则摘要。
+
+检查：
+
+```bash
+.venv/bin/python -c "from src.config_loader import get_config; print(bool(get_config('DEEPSEEK_API_KEY')))"
+curl --noproxy '*' -sS http://127.0.0.1:5083/api/capital-flow
+```
+
+配置或修改 `.env.local` 后需要重启服务：
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.capital-flow.web
+```
+
 ### 修改分类后和机构数据仍有差异
 
 这是预期风险之一。机构可能使用 Wind 自有 ETF 池、公告日/确认日、场内/场外分层或人工维护分类。本项目当前以 TuShare ETF 数据和跟踪指数规则为准，目标是方向参考和可解释，不保证逐项贴合某一家机构。

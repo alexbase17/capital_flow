@@ -11,7 +11,7 @@ from src.http_client import request_json
 
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions"
-DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 WINDOW_KEYS = ("1d", "5d", "20d", "60d")
 SECTION_LABELS = {
     "broad": "宽基",
@@ -77,13 +77,16 @@ def request_deepseek_summary(
     payload = {
         "model": model,
         "temperature": 0.2,
+        "max_tokens": 1200,
+        "thinking": {"type": "disabled"},
         "response_format": {"type": "json_object"},
         "messages": [
             {
                 "role": "system",
                 "content": (
                     "你是市场资金流向看板的分析助手。只能基于用户提供的结构化数据总结，"
-                    "不要编造外部信息，不给买卖建议，不预测收益。输出简体中文 JSON。"
+                    "不要编造外部信息，不给买卖建议，不预测收益。必须输出简体中文 JSON，"
+                    "不要输出 markdown 或代码块。"
                 ),
             },
             {
@@ -99,12 +102,22 @@ def request_deepseek_summary(
                             "focus_items": [
                                 {
                                     "title": "关注点标题，16字以内",
-                                    "detail": "为什么值得关注，45字以内",
-                                    "tags": ["短标签"],
+                                    "detail": "用一到两句话说明为什么值得关注，90字以内",
                                 }
                             ],
                             "risks": ["需要谨慎解读的数据或背离，最多2条"],
                             "data_quality": "数据质量一句话，35字以内",
+                        },
+                        "json_example": {
+                            "headline": "宽基短线回流，行业分化",
+                            "focus_items": [
+                                {
+                                    "title": "沪深300回流",
+                                    "detail": "近5日净申购转强，但近20日仍为净赎回，需观察持续性。",
+                                }
+                            ],
+                            "risks": ["长窗口样本含短历史 ETF 时需谨慎"],
+                            "data_quality": "数据日对齐，NAV估算占比较低",
                         },
                         "data": summary_input,
                     },
@@ -148,11 +161,10 @@ def normalize_summary(summary: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(item, dict):
             continue
         title = clean_text(item.get("title"), 24)
-        detail = clean_text(item.get("detail"), 80)
+        detail = clean_text(item.get("detail"), 100)
         if not title or not detail:
             continue
-        tags = [clean_text(tag, 10) for tag in list(item.get("tags") or [])[:4]]
-        focus_items.append({"title": title, "detail": detail, "tags": [tag for tag in tags if tag]})
+        focus_items.append({"title": title, "detail": detail})
     return {
         "headline": clean_text(summary.get("headline"), 60),
         "focus_items": focus_items,
@@ -189,20 +201,31 @@ def focus_item_from_signal(signal: dict[str, Any]) -> dict[str, Any] | None:
     name = signal.get("name")
     if not name:
         return None
-    detail_parts = []
+    flow_parts = []
     if signal.get("flow_5d") is not None:
-        detail_parts.append(f"5日{round_number(signal.get('flow_5d'))}亿")
+        flow_parts.append(flow_phrase("近5日", signal.get("flow_5d")))
     if signal.get("flow_20d") is not None:
-        detail_parts.append(f"20日{round_number(signal.get('flow_20d'))}亿")
+        flow_parts.append(flow_phrase("近20日", signal.get("flow_20d")))
+    market_parts = []
     if signal.get("change_1d") is not None:
-        detail_parts.append(f"当日涨跌{round_number(signal.get('change_1d'))}%")
+        market_parts.append(f"当日涨跌幅{round_number(signal.get('change_1d'))}%")
     if signal.get("turnover_5d") is not None:
-        detail_parts.append(f"成交均值{round_number(signal.get('turnover_5d'))}%")
+        market_parts.append(f"5日成交均值占比{round_number(signal.get('turnover_5d'))}%")
+    sentences = []
+    if flow_parts:
+        sentences.append("、".join(flow_parts))
+    if market_parts:
+        sentences.append("，".join(market_parts))
     return {
         "title": signal.get("title") or name,
-        "detail": "，".join(detail_parts) or signal.get("reason") or "关注资金、价格和成交变化",
-        "tags": signal.get("tags") or [],
+        "detail": "；".join(sentences) + "。" if sentences else signal.get("reason") or "关注资金、价格和成交变化。",
     }
+
+
+def flow_phrase(window_label: str, value: Any) -> str:
+    numeric_value = number(value)
+    direction = "净申购" if numeric_value >= 0 else "净赎回"
+    return f"{window_label}{direction}{round_number(abs(numeric_value))}亿"
 
 
 def rule_risks(summary_input: dict[str, Any]) -> list[str]:

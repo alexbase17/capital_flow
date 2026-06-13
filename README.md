@@ -16,7 +16,7 @@
 - 总览表首行展示 5 日成交均值占比，用于辅助观察二级市场日均交易热度。
 - 明细表展示当日涨跌幅、5 日成交均值占比、各窗口净申购、各窗口净申购占比、当日 ETF 规模。
 - 点击明细行可展开 60 日分天涨跌幅、5 日滑动窗口成交均值占比、分天净申购金额和 5 日滑动窗口净申购金额走势。
-- 页面头部展示 AI/规则摘要，基于一级市场净申购、二级市场成交热度和涨跌幅提炼关键关注点。
+- 页面头部展示 AI/规则摘要，基于一级市场净申购、二级市场成交热度和涨跌幅，用短句提炼关键关注点。
 - 宽基 ETF、策略因子、A 股行业、港股行业只展示聚合规模合计不低于 20 亿元的项目。
 
 ## 快速接手
@@ -49,12 +49,12 @@ API: http://127.0.0.1:5083/api/capital-flow
 ```env
 TUSHARE_TOKEN=你的TuShareToken
 DEEPSEEK_API_KEY=可选DeepSeekKey
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=deepseek-v4-flash
 ```
 
 `TUSHARE_TOKEN` 通过 `src/config_loader.py` 读取。缺失时 API 会返回 502，并提示 `TUSHARE_TOKEN is not set`。
 
-`DEEPSEEK_API_KEY` 可选。配置后，API 会把压缩后的看板关键数据发送给 DeepSeek 生成页面头部摘要；未配置或调用失败时，自动使用本地规则摘要，不影响核心数据展示。`DEEPSEEK_MODEL` 可按 DeepSeek 当前 API 模型名调整。
+`DEEPSEEK_API_KEY` 可选。配置后，API 会把压缩后的看板关键数据发送给 DeepSeek 生成页面头部摘要；未配置或调用失败时，自动使用本地规则摘要，不影响核心数据展示。默认模型为 `deepseek-v4-flash`，请求使用 JSON 输出并关闭 thinking，以控制延迟和成本；`DEEPSEEK_MODEL` 可按 DeepSeek 当前 API 模型名调整。
 
 ## 目录结构
 

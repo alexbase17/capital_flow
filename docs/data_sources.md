@@ -358,7 +358,7 @@ MIN_INDEX_SCALE_YI = 20.0
 - 各分区、各窗口的 Top 流入和 Top 流出。
 - 基于一级市场净申购、二级市场成交均值占比、当日涨跌幅筛出的候选信号。
 
-摘要不会把完整页面 DOM、全量 ETF 明细或图表点全部发送给模型。未配置 `DEEPSEEK_API_KEY` 或 DeepSeek 调用失败时，页面使用本地规则摘要兜底。模型输出必须是固定 JSON，并由后端规范化为 `headline`、`focus_items`、`risks` 和 `data_quality` 后再进入前端。
+摘要不会把完整页面 DOM、全量 ETF 明细或图表点全部发送给模型。未配置 `DEEPSEEK_API_KEY` 或 DeepSeek 调用失败时，页面使用本地规则摘要兜底。默认模型为 `deepseek-v4-flash`，请求关闭 thinking、启用 JSON 输出并限制输出长度。模型输出必须是固定 JSON，并由后端规范化为 `headline`、`focus_items`、`risks` 和 `data_quality` 后再进入前端；`focus_items` 只保留标题和一到两句原因说明，模型返回的标签字段会被丢弃。
 
 ## 修改口径时的检查清单
 

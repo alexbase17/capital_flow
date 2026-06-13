@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from src.capital_flow.ai_summary import (
+    DEFAULT_DEEPSEEK_MODEL,
     build_ai_summary_input,
     capital_flow_ai_summary,
     parse_model_json,
@@ -114,6 +115,8 @@ class CapitalFlowAiSummaryTests(unittest.TestCase):
         self.assertEqual(summary["source"], "rules")
         self.assertIn("通信", summary["headline"])
         self.assertGreaterEqual(len(summary["focus_items"]), 1)
+        self.assertIn("近5日净申购", summary["focus_items"][0]["detail"])
+        self.assertNotIn("tags", summary["focus_items"][0])
         self.assertIn("NAV估算占比", summary["data_quality"])
 
     def test_capital_flow_ai_summary_skips_network_without_key(self):
@@ -124,6 +127,9 @@ class CapitalFlowAiSummaryTests(unittest.TestCase):
 
         self.assertEqual(summary["source"], "rules")
         request.assert_not_called()
+
+    def test_default_deepseek_model_uses_current_v4_flash(self):
+        self.assertEqual(DEFAULT_DEEPSEEK_MODEL, "deepseek-v4-flash")
 
     def test_capital_flow_ai_summary_falls_back_when_deepseek_fails(self):
         def fake_config(name, default=None):
@@ -152,7 +158,7 @@ class CapitalFlowAiSummaryTests(unittest.TestCase):
                     "message": {
                         "content": (
                             '{"headline":"关注通信","focus_items":[{"title":"通信流入",'
-                            '"detail":"资金价格成交共振","tags":["共振"]}],'
+                            '"detail":"近5日净申购较强，价格和成交同步确认。","tags":["共振"]}],'
                             '"risks":["注意短历史"],"data_quality":"数据质量较好"}'
                         )
                     }
@@ -163,12 +169,18 @@ class CapitalFlowAiSummaryTests(unittest.TestCase):
             summary = request_deepseek_summary(
                 build_ai_summary_input(sample_payload()),
                 api_key="key",
-                model="deepseek-chat",
+                model=DEFAULT_DEEPSEEK_MODEL,
                 api_url="https://api.deepseek.com/chat/completions",
             )
 
         self.assertEqual(summary["headline"], "关注通信")
-        self.assertEqual(summary["focus_items"][0]["tags"], ["共振"])
+        self.assertEqual(summary["focus_items"][0]["detail"], "近5日净申购较强，价格和成交同步确认。")
+        self.assertNotIn("tags", summary["focus_items"][0])
+        sent_payload = request.call_args.kwargs["payload"]
+        self.assertEqual(sent_payload["response_format"], {"type": "json_object"})
+        self.assertEqual(sent_payload["thinking"], {"type": "disabled"})
+        self.assertEqual(sent_payload["max_tokens"], 1200)
+        self.assertIn("json_example", sent_payload["messages"][1]["content"])
         request.assert_called_once()
 
 

@@ -165,7 +165,6 @@ function renderAiSummary(data) {
         <div class="ai-summary-item">
           <div class="ai-summary-item-title">${escapeHtml(item.title || "")}</div>
           <div class="ai-summary-item-detail">${escapeHtml(item.detail || "")}</div>
-          ${(item.tags || []).length ? `<div class="ai-summary-tags">${(item.tags || []).map(tag => `<span>${escapeHtml(tag)}</span>`).join("")}</div>` : ""}
         </div>
       `).join("")}
     </div>
