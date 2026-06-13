@@ -112,6 +112,7 @@ ETF 数据状态字段：
 - `latest_price_date` / `latest_share_date`：TuShare 当前可取到的最新价格日和份额日。
 - `price_date` / `share_date`：本次计算实际使用的对齐日期。
 - `nav_date`：同日单位净值可用日期，缺失时按同日收盘价估算。
+- `nav_backfilled_count`：批量日度 `fund_nav` 缺失后，通过单只 ETF 历史净值查询补齐的日度点数量。
 - `quality.price_source_label` / `quality.flow_price_status`：标记净申购估值为净值口径、收盘价估算或混合口径。
 - `quality.scale_audit`：全页 ETF 分组的规模归因审计汇总。
 - `quality.split_adjusted_count`：全页 ETF 分组触发份额分拆/折算调整的日度点数量，用于后台排查异常净申购尖峰。
@@ -123,7 +124,7 @@ ETF 数据状态字段：
 
 涨跌幅计算会读取 `fund_adj` 复权因子，用于处理现金分红、份额分拆、合并和折算对收益序列的影响；ETF 净申购金额仍使用真实份额变化和同日单位净值/收盘价，不使用复权价。
 
-ETF 规模、净申购占比分母和成交均值占比分母使用净值优先 AUM 口径；同日单位净值缺失时回退收盘价估算。`scale_audit` 独立使用收盘价市值口径做闭合校验，避免把净值和收盘价差异混入规模归因公式。
+ETF 规模、净申购占比分母和成交均值占比分母使用净值优先 AUM 口径；`fund_nav` 先按交易日批量读取，批量缺失但目标 ETF 当日有价格时，再按单只 ETF 拉取窗口历史净值回填，仍缺失才回退收盘价估算。`scale_audit` 独立使用收盘价市值口径做闭合校验，避免把净值和收盘价差异混入规模归因公式。
 
 `etf.sections` 下的 section：
 

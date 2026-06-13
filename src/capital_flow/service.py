@@ -22,6 +22,7 @@ from src.capital_flow.fetcher import (
     fund_basic_map,
     fund_daily_map,
     fund_daily_snapshot_map,
+    fund_nav_history_map,
     fund_nav_map,
     fund_share_map,
     recent_fund_daily_dates,
@@ -54,6 +55,7 @@ _fund_adj_map = fund_adj_map
 _fund_basic_map = fund_basic_map
 _fund_daily_map = fund_daily_map
 _fund_daily_snapshot_map = fund_daily_snapshot_map
+_fund_nav_history_map = fund_nav_history_map
 _fund_nav_map = fund_nav_map
 _fund_share_map = fund_share_map
 _hsgt_item = hsgt_item
@@ -111,6 +113,13 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
     daily_amounts = {trade_date: candidate_amounts[trade_date] for trade_date in fund_dates}
     daily_shares = {trade_date: candidate_shares[trade_date] for trade_date in fund_dates}
     daily_navs = {trade_date: fund_nav_map(client, trade_date) for trade_date in fund_dates[:-1]}
+    nav_backfilled_count = fill_missing_navs(
+        client,
+        daily_navs,
+        fund_dates=fund_dates[:-1],
+        required_codes=required_codes,
+        daily_prices=daily_prices,
+    )
     daily_adj_factors = {trade_date: fund_adj_map(client, trade_date) for trade_date in fund_dates}
     fill_missing_adj_factors(
         client,
@@ -119,7 +128,11 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
         required_codes=required_codes,
         daily_prices=daily_prices,
     )
-    etf_status = {**etf_status, "nav_date": fmt_date(fund_dates[0]) if daily_navs.get(fund_dates[0]) else None}
+    etf_status = {
+        **etf_status,
+        "nav_date": fmt_date(fund_dates[0]) if daily_navs.get(fund_dates[0]) else None,
+        "nav_backfilled_count": nav_backfilled_count,
+    }
     window_payloads = {}
     for window_config in FLOW_WINDOWS:
         window_key, window_label, configured_days = window_config
@@ -157,7 +170,7 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
         "notes": [
             "时间窗口按最近 N 个交易日统计，页面中的“日”均指 ETF 有效交易日；ETF 净申购金额为窗口内每日份额变动金额累加，北上/南下资金为窗口内每日净额累加。",
             "ETF 每日净申购只使用目标权益 ETF 价格和份额 100% 对齐的交易日；最新交易日数据不完整时自动回退到最近完整交易日。",
-            "ETF 每日净申购金额优先按份额变动乘以同日单位净值计算；同日净值缺失时用同日收盘价估算，近期净值发布后会随短 TTL 缓存自动回填。",
+            "ETF 每日净申购金额优先按份额变动乘以同日单位净值计算；批量日度净值缺失时会按单只 ETF 回填窗口历史净值，仍缺失才用同日收盘价估算。",
             "ETF 规模、净申购占比分母和成交均值占比分母优先使用单位净值口径，净值缺失时用收盘价估算；后台规模归因审计单独使用收盘价市值口径保持闭合。",
             "当日和分天涨跌幅优先使用 fund_adj 复权因子计算，用于处理现金分红、份额分拆、合并和折算对收益序列的影响；ETF 净申购金额不使用复权价。",
             "5日成交均值占比为近 5 个交易日逐日计算场内成交额 / 当日期初 ETF 规模后取均值，用于观察二级市场交易热度。",
@@ -319,6 +332,42 @@ def fill_missing_adj_factors(
                 and to_positive_float(daily_prices.get(trade_date, {}).get(code)) > 0
             ):
                 daily_adj_factors[trade_date][code] = factor
+
+
+def fill_missing_navs(
+    client: TushareClient,
+    daily_navs: dict[str, dict[str, float]],
+    *,
+    fund_dates: list[str],
+    required_codes: set[str],
+    daily_prices: dict[str, dict[str, float]],
+) -> int:
+    if not fund_dates or not required_codes:
+        return 0
+    missing_codes = {
+        code
+        for trade_date in fund_dates
+        for code in required_codes
+        if to_positive_float(daily_prices.get(trade_date, {}).get(code)) > 0
+        and to_positive_float(daily_navs.get(trade_date, {}).get(code)) <= 0
+    }
+    if not missing_codes:
+        return 0
+    start_date = fund_dates[-1]
+    end_date = fund_dates[0]
+    backfilled_count = 0
+    for code in sorted(missing_codes):
+        history = fund_nav_history_map(client, code, start_date=start_date, end_date=end_date)
+        for trade_date, unit_nav in history.items():
+            if (
+                trade_date in daily_navs
+                and unit_nav > 0
+                and to_positive_float(daily_prices.get(trade_date, {}).get(code)) > 0
+                and to_positive_float(daily_navs.get(trade_date, {}).get(code)) <= 0
+            ):
+                daily_navs[trade_date][code] = unit_nav
+                backfilled_count += 1
+    return backfilled_count
 
 
 def to_positive_float(value: Any) -> float:

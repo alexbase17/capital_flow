@@ -10,9 +10,11 @@ from src.capital_flow.service import (
     _change_pct,
     _etf_flows_for_window,
     fill_missing_adj_factors,
+    fill_missing_navs,
     _fund_adj_history_map,
     _fund_adj_map,
     _flow_price_for_etf,
+    _fund_nav_history_map,
     _hsgt_item,
     _section_payload,
 )
@@ -54,6 +56,15 @@ class CapitalFlowServiceTests(unittest.TestCase):
             self.assertEqual(fetcher.fund_daily_map(client, "20250102"), {"510300.SH": 4.2})
 
         self.assertEqual(client.calls, 1)
+
+    def test_cache_file_path_preserves_dotted_code_keys(self):
+        with TemporaryDirectory() as tmpdir, patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)):
+            sh_path = fetcher.cache_file_path("fund_nav_history/510300.SH_20250101_20250102")
+            sz_path = fetcher.cache_file_path("fund_nav_history/510300.SZ_20250101_20250102")
+
+        self.assertNotEqual(sh_path, sz_path)
+        self.assertTrue(str(sh_path).endswith("510300.SH_20250101_20250102.json"))
+        self.assertTrue(str(sz_path).endswith("510300.SZ_20250101_20250102.json"))
 
     def test_fund_daily_snapshot_maps_close_and_amount(self):
         test_case = self
@@ -102,6 +113,25 @@ class CapitalFlowServiceTests(unittest.TestCase):
                 {"20250102": 1.0},
             )
 
+    def test_fund_nav_history_map_reads_unit_nav_by_code(self):
+        test_case = self
+
+        class FakeClient:
+            def query(self, api_name, params=None, fields=None):
+                test_case.assertEqual(api_name, "fund_nav")
+                test_case.assertEqual(
+                    params,
+                    {"ts_code": "510300.SH", "start_date": "20250101", "end_date": "20250102"},
+                )
+                test_case.assertEqual(fields, "ts_code,nav_date,unit_nav")
+                return [{"ts_code": "510300.SH", "nav_date": "20250102", "unit_nav": "4.2"}]
+
+        with TemporaryDirectory() as tmpdir, patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)):
+            self.assertEqual(
+                _fund_nav_history_map(FakeClient(), "510300.SH", start_date="20250101", end_date="20250102"),
+                {"20250102": 4.2},
+            )
+
     def test_fill_missing_adj_factors_uses_code_history_for_bulk_gaps(self):
         class FakeClient:
             pass
@@ -131,6 +161,37 @@ class CapitalFlowServiceTests(unittest.TestCase):
         self.assertEqual(daily_adj_factors["20250103"]["589270.SH"], 1.0)
         self.assertEqual(daily_adj_factors["20250102"]["589270.SH"], 1.0)
         self.assertNotIn("589270.SH", daily_adj_factors["20250101"])
+
+    def test_fill_missing_navs_uses_code_history_for_bulk_gaps(self):
+        class FakeClient:
+            pass
+
+        daily_navs = {
+            "20250103": {"510300.SH": 4.1},
+            "20250102": {"510300.SH": 4.0},
+            "20250101": {"510300.SH": 3.9},
+        }
+        client = FakeClient()
+        with patch("src.capital_flow.service.fund_nav_history_map") as mock_history:
+            mock_history.return_value = {"20250103": 1.0, "20250102": 1.1, "20250101": 1.2}
+
+            backfilled_count = fill_missing_navs(
+                client,
+                daily_navs,
+                fund_dates=["20250103", "20250102", "20250101"],
+                required_codes={"510300.SH", "589270.SH"},
+                daily_prices={
+                    "20250103": {"510300.SH": 4.0, "589270.SH": 1.0},
+                    "20250102": {"510300.SH": 3.9, "589270.SH": 1.0},
+                    "20250101": {"510300.SH": 3.8},
+                },
+            )
+
+        mock_history.assert_called_once_with(client, "589270.SH", start_date="20250101", end_date="20250103")
+        self.assertEqual(backfilled_count, 2)
+        self.assertEqual(daily_navs["20250103"]["589270.SH"], 1.0)
+        self.assertEqual(daily_navs["20250102"]["589270.SH"], 1.1)
+        self.assertNotIn("589270.SH", daily_navs["20250101"])
 
     def test_fetcher_cache_can_be_disabled_for_diagnostics(self):
         class FakeClient:

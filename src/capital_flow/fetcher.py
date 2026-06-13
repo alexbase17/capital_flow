@@ -109,6 +109,15 @@ def fund_nav_map(client: TushareClient, nav_date: str) -> dict[str, float]:
     )
 
 
+def fund_nav_history_map(client: TushareClient, ts_code: str, *, start_date: str, end_date: str) -> dict[str, float]:
+    return cached_map(
+        f"fund_nav_history/{ts_code}_{start_date}_{end_date}",
+        lambda: _fund_nav_history_map_uncached(client, ts_code, start_date=start_date, end_date=end_date),
+        max_age_seconds=dated_cache_ttl(end_date),
+        cache_empty=True,
+    )
+
+
 def fund_adj_map(client: TushareClient, trade_date: str) -> dict[str, float]:
     return cached_map(
         f"fund_adj/{trade_date}",
@@ -150,6 +159,25 @@ def _fund_nav_map_uncached(client: TushareClient, nav_date: str) -> dict[str, fl
         str(row["ts_code"]): to_float(row.get("unit_nav"))
         for row in rows
         if row.get("ts_code") and to_float(row.get("unit_nav")) > 0
+    }
+
+
+def _fund_nav_history_map_uncached(
+    client: TushareClient,
+    ts_code: str,
+    *,
+    start_date: str,
+    end_date: str,
+) -> dict[str, float]:
+    rows = client.query(
+        "fund_nav",
+        {"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+        "ts_code,nav_date,unit_nav",
+    )
+    return {
+        str(row["nav_date"]): to_float(row.get("unit_nav"))
+        for row in rows
+        if row.get("nav_date") and to_float(row.get("unit_nav")) > 0
     }
 
 
@@ -287,14 +315,14 @@ def read_cache(path: Path, *, max_age_seconds: int | None) -> Any | None:
 
 def write_cache(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.{id(payload)}.tmp")
     tmp_path.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     tmp_path.replace(path)
 
 
 def cache_file_path(cache_key: str) -> Path:
     safe_parts = [part.replace("/", "_").replace("..", "_") for part in cache_key.split("/")]
-    return CACHE_DIR.joinpath(*safe_parts).with_suffix(".json")
+    return Path(f"{CACHE_DIR.joinpath(*safe_parts)}.json")
 
 
 def dated_cache_ttl(yyyymmdd_value: str) -> int | None:
