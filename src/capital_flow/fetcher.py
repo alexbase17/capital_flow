@@ -118,6 +118,15 @@ def fund_adj_map(client: TushareClient, trade_date: str) -> dict[str, float]:
     )
 
 
+def fund_adj_history_map(client: TushareClient, ts_code: str, *, start_date: str, end_date: str) -> dict[str, float]:
+    return cached_map(
+        f"fund_adj_history/{ts_code}_{start_date}_{end_date}",
+        lambda: _fund_adj_history_map_uncached(client, ts_code, start_date=start_date, end_date=end_date),
+        max_age_seconds=dated_cache_ttl(end_date),
+        cache_empty=True,
+    )
+
+
 def _fund_daily_snapshot_map_uncached(client: TushareClient, trade_date: str) -> dict[str, dict[str, float]]:
     rows = client.query("fund_daily", {"trade_date": trade_date}, "ts_code,trade_date,close,amount")
     return {
@@ -150,6 +159,25 @@ def _fund_adj_map_uncached(client: TushareClient, trade_date: str) -> dict[str, 
         str(row["ts_code"]): to_float(row.get("adj_factor"))
         for row in rows
         if row.get("ts_code") and to_float(row.get("adj_factor")) > 0
+    }
+
+
+def _fund_adj_history_map_uncached(
+    client: TushareClient,
+    ts_code: str,
+    *,
+    start_date: str,
+    end_date: str,
+) -> dict[str, float]:
+    rows = client.query(
+        "fund_adj",
+        {"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
+        "ts_code,trade_date,adj_factor",
+    )
+    return {
+        str(row["trade_date"]): to_float(row.get("adj_factor"))
+        for row in rows
+        if row.get("trade_date") and to_float(row.get("adj_factor")) > 0
     }
 
 

@@ -17,6 +17,7 @@ from src.capital_flow.calculator import (
     section_payload,
 )
 from src.capital_flow.fetcher import (
+    fund_adj_history_map,
     fund_adj_map,
     fund_basic_map,
     fund_daily_map,
@@ -47,6 +48,7 @@ _CACHE: dict[str, Any] = {"payloads": {}}
 _change_pct = change_pct_from_close
 _etf_flows_for_window = etf_flows_for_window
 _flow_price_for_etf = flow_price_for_etf
+_fund_adj_history_map = fund_adj_history_map
 _fund_adj_map = fund_adj_map
 _fund_basic_map = fund_basic_map
 _fund_daily_map = fund_daily_map
@@ -109,6 +111,13 @@ def _build_capital_flow_payload(client: TushareClient, selected_window: tuple[st
     daily_shares = {trade_date: candidate_shares[trade_date] for trade_date in fund_dates}
     daily_navs = {trade_date: fund_nav_map(client, trade_date) for trade_date in fund_dates[:-1]}
     daily_adj_factors = {trade_date: fund_adj_map(client, trade_date) for trade_date in fund_dates}
+    fill_missing_adj_factors(
+        client,
+        daily_adj_factors,
+        fund_dates=fund_dates,
+        required_codes=required_codes,
+        daily_prices=daily_prices,
+    )
     etf_status = {**etf_status, "nav_date": fmt_date(fund_dates[0]) if daily_navs.get(fund_dates[0]) else None}
     window_payloads = {}
     for window_config in FLOW_WINDOWS:
@@ -259,6 +268,38 @@ def missing_code_count(values: dict[str, float], required_codes: set[str]) -> in
     if not required_codes:
         return 0
     return sum(1 for code in required_codes if to_positive_float(values.get(code)) <= 0)
+
+
+def fill_missing_adj_factors(
+    client: TushareClient,
+    daily_adj_factors: dict[str, dict[str, float]],
+    *,
+    fund_dates: list[str],
+    required_codes: set[str],
+    daily_prices: dict[str, dict[str, float]],
+) -> None:
+    if not fund_dates or not required_codes:
+        return
+    missing_codes = {
+        code
+        for trade_date in fund_dates
+        for code in required_codes
+        if to_positive_float(daily_prices.get(trade_date, {}).get(code)) > 0
+        and to_positive_float(daily_adj_factors.get(trade_date, {}).get(code)) <= 0
+    }
+    if not missing_codes:
+        return
+    start_date = fund_dates[-1]
+    end_date = fund_dates[0]
+    for code in sorted(missing_codes):
+        history = fund_adj_history_map(client, code, start_date=start_date, end_date=end_date)
+        for trade_date, factor in history.items():
+            if (
+                trade_date in daily_adj_factors
+                and factor > 0
+                and to_positive_float(daily_prices.get(trade_date, {}).get(code)) > 0
+            ):
+                daily_adj_factors[trade_date][code] = factor
 
 
 def to_positive_float(value: Any) -> float:

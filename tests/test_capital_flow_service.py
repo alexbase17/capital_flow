@@ -9,6 +9,8 @@ from src.capital_flow.service import (
     active_target_etf_codes,
     _change_pct,
     _etf_flows_for_window,
+    fill_missing_adj_factors,
+    _fund_adj_history_map,
     _fund_adj_map,
     _flow_price_for_etf,
     _hsgt_item,
@@ -80,6 +82,55 @@ class CapitalFlowServiceTests(unittest.TestCase):
 
         with TemporaryDirectory() as tmpdir, patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)):
             self.assertEqual(_fund_adj_map(FakeClient(), "20250102"), {"510300.SH": 1.267})
+
+    def test_fund_adj_history_map_reads_adjustment_factor_by_code(self):
+        test_case = self
+
+        class FakeClient:
+            def query(self, api_name, params=None, fields=None):
+                test_case.assertEqual(api_name, "fund_adj")
+                test_case.assertEqual(
+                    params,
+                    {"ts_code": "589270.SH", "start_date": "20250101", "end_date": "20250102"},
+                )
+                test_case.assertEqual(fields, "ts_code,trade_date,adj_factor")
+                return [{"ts_code": "589270.SH", "trade_date": "20250102", "adj_factor": "1.0"}]
+
+        with TemporaryDirectory() as tmpdir, patch.object(fetcher, "CACHE_DIR", fetcher.Path(tmpdir)):
+            self.assertEqual(
+                _fund_adj_history_map(FakeClient(), "589270.SH", start_date="20250101", end_date="20250102"),
+                {"20250102": 1.0},
+            )
+
+    def test_fill_missing_adj_factors_uses_code_history_for_bulk_gaps(self):
+        class FakeClient:
+            pass
+
+        daily_adj_factors = {
+            "20250103": {"510300.SH": 1.2},
+            "20250102": {"510300.SH": 1.1},
+            "20250101": {"510300.SH": 1.0},
+        }
+        client = FakeClient()
+        with patch("src.capital_flow.service.fund_adj_history_map") as mock_history:
+            mock_history.return_value = {"20250103": 1.0, "20250102": 1.0, "20250101": 1.0}
+
+            fill_missing_adj_factors(
+                client,
+                daily_adj_factors,
+                fund_dates=["20250103", "20250102", "20250101"],
+                required_codes={"510300.SH", "589270.SH"},
+                daily_prices={
+                    "20250103": {"510300.SH": 4.0, "589270.SH": 1.0},
+                    "20250102": {"510300.SH": 3.9, "589270.SH": 1.0},
+                    "20250101": {"510300.SH": 3.8},
+                },
+            )
+
+        mock_history.assert_called_once_with(client, "589270.SH", start_date="20250101", end_date="20250103")
+        self.assertEqual(daily_adj_factors["20250103"]["589270.SH"], 1.0)
+        self.assertEqual(daily_adj_factors["20250102"]["589270.SH"], 1.0)
+        self.assertNotIn("589270.SH", daily_adj_factors["20250101"])
 
     def test_fetcher_cache_can_be_disabled_for_diagnostics(self):
         class FakeClient:
